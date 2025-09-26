@@ -137,15 +137,15 @@ a:hover {
 }
 
 .word-circle text {
-  fill: var(--text);
+  fill: var(--brand-2);
   font-weight: 700;
   text-anchor: middle;
   dominant-baseline: central;
 }
 
 .word-circle circle {
-  fill: var(--brand);
-  stroke: var(--brand-2);
+  fill: #4e3aa9; /* dark-ish purple */
+  stroke: var(--brand);
   stroke-width: 2px;
 }
 

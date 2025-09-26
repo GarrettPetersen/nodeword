@@ -305,77 +305,55 @@ function toAliasGraph(graph) {
 }
 
 function measureWordCircle(word) {
-  // Iteratively determine radius and font size to ensure content fits
+  // Fit based on the longest token; wrap other tokens if helpful but size by max token
   const text = String(word).trim();
   const tokens = text.split(/\s+/);
+  const longest = tokens.reduce((m, t) => Math.max(m, t.length), 0);
   const minR = 18;
-  const maxR = 64;
+  const maxR = 72;
   const minFont = 9;
   const maxFont = 18;
 
-  // Start with a guess based on characters
-  let r = Math.min(maxR, Math.max(minR, 16 + Math.ceil(text.length * 0.9)));
-  let font = Math.min(maxFont, Math.max(minFont, Math.floor(r * 0.45)));
+  // Radius driven primarily by the longest word
+  let r = Math.min(maxR, Math.max(minR, 14 + Math.ceil(longest * 1.8)));
+  let font = Math.min(maxFont, Math.max(minFont, Math.floor(r * 0.44)));
 
-  function wrapForRadiusFont(radius, fontPx) {
-    // Estimate max chars per line by circle chord width at typical line height
-    const maxLines = Math.max(1, Math.floor((radius * 1.6) / (fontPx + 2)));
-    const maxWidthPx = radius * 1.6; // slightly less than diameter to allow padding
-    const avgCharPx = fontPx * 0.6; // rough average character width factor
+  function layout(radius, fontPx) {
+    const maxWidthPx = radius * 1.7;
+    const avgCharPx = fontPx * 0.58;
     const maxChars = Math.max(3, Math.floor(maxWidthPx / avgCharPx));
-
+    const maxLines = Math.max(1, Math.floor((radius * 1.6) / (fontPx + 2)));
     const lines = [];
     let line = '';
     for (const tk of tokens) {
       const next = line ? line + ' ' + tk : tk;
-      if (next.length <= maxChars) {
-        line = next;
-      } else {
-        if (line) lines.push(line);
-        line = tk;
-      }
+      if (next.length <= maxChars) line = next; else { if (line) lines.push(line); line = tk; }
     }
     if (line) lines.push(line);
-    // If we exceeded max lines, reflow by splitting longest lines
     while (lines.length > maxLines) {
-      // split the longest line into two
-      let idx = 0; let longestLen = 0;
-      for (let i = 0; i < lines.length; i++) {
-        if (lines[i].length > longestLen) { longestLen = lines[i].length; idx = i; }
-      }
-      const words = lines[idx].split(' ');
-      if (words.length <= 1) break;
-      const half = Math.ceil(words.length / 2);
-      const first = words.slice(0, half).join(' ');
-      const second = words.slice(half).join(' ');
-      lines.splice(idx, 1, first, second);
+      let idx = 0; let len = 0;
+      for (let i = 0; i < lines.length; i++) { if (lines[i].length > len) { len = lines[i].length; idx = i; } }
+      const ws = lines[idx].split(' ');
+      if (ws.length <= 1) break;
+      const half = Math.ceil(ws.length / 2);
+      lines.splice(idx, 1, ws.slice(0, half).join(' '), ws.slice(half).join(' '));
     }
-
-    const totalHeight = lines.length * (fontPx + 2);
-    const fitsVertically = totalHeight <= radius * 1.6;
-    const widest = Math.max(...lines.map(l => l.length), 0);
-    const fitsHorizontally = widest * avgCharPx <= maxWidthPx;
-    const fits = fitsHorizontally && fitsVertically;
-    return { lines, fits, totalHeight };
+    const totalH = lines.length * (fontPx + 2);
+    const fits = (totalH <= radius * 1.6) && (Math.max(...lines.map(l => l.length), 0) * avgCharPx <= maxWidthPx);
+    return { lines, totalH, fits };
   }
 
-  for (let i = 0; i < 20; i++) {
-    const attempt = wrapForRadiusFont(r, font);
+  for (let i = 0; i < 24; i++) {
+    const attempt = layout(r, font);
     if (attempt.fits) {
-      const startY = -attempt.totalHeight / 2 + font / 2;
+      const startY = -attempt.totalH / 2 + font / 2;
       return { radius: r, fontSize: font, parts: attempt.lines, startY };
     }
-    // If doesn't fit, first try increasing radius up to cap, else shrink font
-    if (r < maxR) {
-      r += 4;
-    } else if (font > minFont) {
-      font -= 1;
-    } else {
-      break;
-    }
+    // Prefer increasing radius first (up to cap), then shrinking font
+    if (r < maxR) r += 4; else if (font > minFont) font -= 1; else break;
   }
-  const fallback = { radius: Math.min(maxR, Math.max(minR, r)), fontSize: Math.max(minFont, Math.min(maxFont, font)), parts: [text], startY: 0 };
-  return fallback;
+  const startY = -font / 2;
+  return { radius: r, fontSize: font, parts: [text], startY };
 }
 
 function renderForceGraph(container, aliasGraph) {
