@@ -274,6 +274,12 @@ async function fetchWordData() {
   return data;
 }
 
+const NODEWORD_CONFIG = {
+  targetWords: 12,
+  maxDegree: 4,
+  maxAttempts: 6000,
+};
+
 function toAliasGraph(graph) {
   const wordAliases = new Map();
   const catAliases = new Map();
@@ -429,8 +435,9 @@ document.addEventListener("DOMContentLoaded", () => {
     console.log('[Nodeword] Generating puzzle…');
     try {
       if (!wordData) wordData = await fetchWordData();
-      console.log('[Nodeword] Generating graph with constraints…');
-      const graph = generatePuzzleGraph(wordData, 12, 4, 6000);
+      const cfg = NODEWORD_CONFIG;
+      console.log('[Nodeword] Generating graph with constraints…', cfg);
+      const graph = generatePuzzleGraph(wordData, cfg.targetWords, cfg.maxDegree, cfg.maxAttempts);
       console.log('[Nodeword] Graph generated:', {
         words: graph.words.length,
         categories: graph.categories.length,
