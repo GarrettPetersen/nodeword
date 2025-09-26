@@ -381,8 +381,8 @@ function measureWordCircle(word) {
 function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmojis) {
   container.innerHTML = '';
   const svg = d3.select(container).append('svg').attr('class', 'graph-svg');
-  const width = container.clientWidth;
-  const height = Math.min(820, Math.max(520, Math.floor(window.innerHeight * 0.75)));
+  let width = container.clientWidth;
+  let height = Math.min(820, Math.max(520, Math.floor(window.innerHeight * 0.75)));
   svg.attr('width', width).attr('height', height);
   const scene = svg.append('g').attr('class', 'scene');
 
@@ -453,6 +453,13 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     .attr('class', 'cat-emoji')
     .attr('text-anchor', 'middle')
     .attr('dominant-baseline', 'central')
+    .text('');
+  // Hidden label to show on solve
+  const catLabel = catNodes
+    .append('text')
+    .attr('class', 'cat-label')
+    .attr('text-anchor', 'middle')
+    .attr('y', -20)
     .text('');
 
   // Build word-circle overlay assignments with minimization of pre-solved categories
@@ -612,6 +619,9 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
       const emojiChar = common ? (categoryEmojis[common] || '') : '';
       const textSel = catSel.select('text.cat-emoji');
       textSel.text(emojiChar);
+      // Category name label only after entire puzzle is solved
+      const labelSel = catSel.select('text.cat-label');
+      labelSel.text(highlight && solved ? (common || '') : '');
       const lines = linksByCategory.get(catAlias) || [];
       for (const ln of lines) ln.classed('highlight', highlight);
     }
@@ -679,7 +689,8 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
   updateCategoryHighlights();
   checkForSolved();
 
-  const basePadding = Math.max(24, Math.round(Math.min(width, height) * 0.06));
+  const computePadding = () => Math.max(24, Math.round(Math.min(width, height) * 0.06));
+  let basePadding = computePadding();
   const boundaryK = 0.2; // stronger boundary pushback
 
   function boundaryForce() {
@@ -775,14 +786,32 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
 
   // Resize handling for responsiveness
   const onResize = () => {
-    const w = container.clientWidth;
-    const h = Math.min(820, Math.max(520, Math.floor(window.innerHeight * 0.75)));
-    svg.attr('width', w).attr('height', h);
-    simulation.force('center', d3.forceCenter(w / 2, h / 2));
-    simulation.alpha(0.3).restart();
+    const prevW = width;
+    const prevH = height;
+    width = container.clientWidth;
+    height = Math.min(820, Math.max(520, Math.floor(window.innerHeight * 0.75)));
+    basePadding = computePadding();
+    svg.attr('width', width).attr('height', height);
+    // Update forces that depend on width/height
+    simulation
+      .force('center', d3.forceCenter(width / 2, height / 2))
+      .force('x', d3.forceX(width / 2).strength(0.16))
+      .force('y', d3.forceY(height / 2).strength(0.16));
+    // Immediately translate nodes toward the new center so they don't sit offscreen
+    const dx = (width - prevW) / 2;
+    const dy = (height - prevH) / 2;
+    if (dx !== 0 || dy !== 0) {
+      for (const n of nodes) {
+        n.x = (n.x || 0) + dx;
+        n.y = (n.y || 0) + dy;
+        if (n.fx != null) n.fx += dx;
+        if (n.fy != null) n.fy += dy;
+      }
+    }
     // Reset scene scale and refit after resize
     scene.attr('transform', null);
     lastScale = 1;
+    simulation.alpha(0.8).restart();
   };
   window.addEventListener('resize', onResize, { passive: true });
 
@@ -798,6 +827,10 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
       if (statusEl) statusEl.textContent = 'Puzzle solved!';
       const btn = document.getElementById('nextBtn');
       if (btn) btn.style.visibility = 'visible';
+      // Ensure labels are visible upon solve
+      for (const [, catSel] of categoryNodeByAlias.entries()) {
+        // catLabel texts are set in updateCategoryHighlights; just ensure not empty
+      }
     }
   }
 }
@@ -819,17 +852,25 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const container = document.getElementById('puzzle');
   const nextBtn = document.getElementById('nextBtn');
+  // Progressive puzzle size: start at 5, increase to max 12 after each solve
+  let currentTargetWords = 5;
+  const maxTargetWords = 12;
 
   let wordData = null;
 
   async function generateAndRender() {
     container.textContent = 'Generating…';
     console.log('[Nodeword] Generating puzzle…');
+    // Hide next button until solved and clear status message
+    if (nextBtn) nextBtn.style.visibility = 'hidden';
+    const statusEl = document.getElementById('status');
+    if (statusEl) statusEl.textContent = '';
     try {
       if (!wordData) wordData = await fetchWordData();
       const cfg = NODEWORD_CONFIG;
-      console.log('[Nodeword] Generating graph with constraints…', cfg);
-      const graph = generatePuzzleGraph(wordData, cfg.targetWords, cfg.maxDegree, cfg.maxAttempts);
+      const target = Math.min(Math.max(5, currentTargetWords), maxTargetWords);
+      console.log('[Nodeword] Generating graph with constraints…', { ...cfg, targetWords: target });
+      const graph = generatePuzzleGraph(wordData, target, cfg.maxDegree, cfg.maxAttempts);
       console.log('[Nodeword] Graph generated:', {
         words: graph.words.length,
         categories: graph.categories.length,
@@ -847,6 +888,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
   nextBtn?.addEventListener('click', () => {
     console.log('[Nodeword] Next puzzle clicked');
+    // Increase target words up to max, then re-generate
+    currentTargetWords = Math.min(currentTargetWords + 1, maxTargetWords);
     generateAndRender();
   });
   if (nextBtn) nextBtn.style.visibility = 'hidden';

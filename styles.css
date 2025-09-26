@@ -151,6 +151,13 @@ a:hover {
   pointer-events: none;
 }
 
+.node.category .cat-label {
+  font-size: 12px;
+  font-weight: 700;
+  fill: var(--text);
+  pointer-events: none;
+}
+
 .node text {
   fill: #0b0e1a;
   font-weight: 700;
