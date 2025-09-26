@@ -149,6 +149,17 @@ a:hover {
   stroke-width: 2px;
 }
 
+.word-circle {
+  pointer-events: all;
+  cursor: pointer;
+}
+
+.word-circle.selected circle {
+  stroke: #00e5ff;
+  stroke-width: 3px;
+  filter: drop-shadow(0 0 8px rgba(0,229,255,0.5));
+}
+
 .graph {
   display: grid;
   grid-template-columns: 1fr 1fr;

@@ -448,6 +448,78 @@ function renderForceGraph(container, aliasGraph) {
     }
   });
 
+  // Click handling for swapping circles between nodes
+  let selected = null; // d (node datum) for selected word-circle
+
+  function deselect() {
+    selected = null;
+    wordCircleG.classed('selected', false);
+  }
+
+  function flyTo(gSel, x, y) {
+    gSel.transition().duration(280).ease(d3.easeCubicOut)
+      .attr('transform', `translate(${x},${y})`);
+  }
+
+  // Maintain mapping from node alias to assigned word
+  const nodeAliasToWord = new Map(assignment);
+  const wordCircleByAlias = new Map();
+  wordCircleG.each(function(d) { wordCircleByAlias.set(d.alias, d3.select(this)); });
+
+  wordCircleG.on('click', function(event, d) {
+    event.stopPropagation();
+    const me = d3.select(this);
+    if (!selected) {
+      selected = d;
+      me.classed('selected', true);
+      return;
+    }
+    if (selected && selected.alias === d.alias) {
+      deselect();
+      return;
+    }
+    // Swap words between selected node and current node
+    const a = selected.alias;
+    const b = d.alias;
+    const wa = nodeAliasToWord.get(a);
+    const wb = nodeAliasToWord.get(b);
+    nodeAliasToWord.set(a, wb);
+    nodeAliasToWord.set(b, wa);
+
+    // Re-measure circles for both if needed
+    const ma = measureWordCircle(wb);
+    const mb = measureWordCircle(wa);
+    circleMetrics.set(a, ma);
+    circleMetrics.set(b, mb);
+
+    // Update visuals for both circles (text + radius)
+    const ga = wordCircleByAlias.get(a);
+    const gb = wordCircleByAlias.get(b);
+    if (ga) {
+      ga.select('circle').transition().duration(160).attr('r', ma.radius);
+      ga.selectAll('text').remove();
+      for (let i = 0; i < ma.parts.length; i++) {
+        ga.append('text').attr('y', ma.startY + i * (ma.fontSize + 2)).style('font-size', ma.fontSize + 'px').text(ma.parts[i]);
+      }
+    }
+    if (gb) {
+      gb.select('circle').transition().duration(160).attr('r', mb.radius);
+      gb.selectAll('text').remove();
+      for (let i = 0; i < mb.parts.length; i++) {
+        gb.append('text').attr('y', mb.startY + i * (mb.fontSize + 2)).style('font-size', mb.fontSize + 'px').text(mb.parts[i]);
+      }
+    }
+
+    // Nudge simulation to settle with new radii
+    simulation.alpha(0.4).restart();
+
+    // Visual: selected state cleared, and ensure both circles fly to their node positions on next tick
+    deselect();
+  });
+
+  // Click anywhere else to clear selection
+  svg.on('click', () => deselect());
+
   const padding = 24; // keep a small buffer to edges
 
   function boundaryForce() {
