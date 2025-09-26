@@ -375,6 +375,7 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
   const width = container.clientWidth;
   const height = Math.min(820, Math.max(520, Math.floor(window.innerHeight * 0.75)));
   svg.attr('width', width).attr('height', height);
+  const scene = svg.append('g').attr('class', 'scene');
 
   const nodes = aliasGraph.nodes.map(n => ({ ...n }));
   const links = aliasGraph.links.map(l => ({ ...l }));
@@ -385,7 +386,7 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     edges: links.length
   });
 
-  const link = svg.append('g')
+  const link = scene.append('g')
     .attr('stroke-linecap', 'round')
     .selectAll('line')
     .data(links)
@@ -393,7 +394,7 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     .append('line')
     .attr('class', 'link');
 
-  const node = svg.append('g')
+  const node = scene.append('g')
     .selectAll('g')
     .data(nodes, d => d.alias)
     .enter()
@@ -460,7 +461,7 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     circleMetrics.set(wn.alias, m);
   }
 
-  const circlesLayer = svg.append('g').attr('class', 'word-circles');
+  const circlesLayer = scene.append('g').attr('class', 'word-circles');
   const wordCircleG = circlesLayer.selectAll('g')
     .data(wordNodes)
     .enter()
@@ -511,8 +512,8 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     linksByCategory.set(cat, arr);
   });
 
-  function computeCommonCategoryForCategoryAlias(catAlias) {
-    // Find words (actual strings) assigned to word nodes connected to this category
+  function commonCategoryForAlias(catAlias) {
+    // Compute the intersection of categories among assigned words connected to this category node
     const connectedWordAliases = links
       .filter(l => (typeof l.target === 'string' ? l.target : l.target.alias) === catAlias)
       .map(l => (typeof l.source === 'string' ? l.source : l.source.alias));
@@ -520,7 +521,8 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     let intersection = null;
     for (const wa of connectedWordAliases) {
       const word = nodeAliasToWord.get(wa);
-      const cats = new Set(wordToCategories[word] || []);
+      const catsArr = wordToCategories[word] || [];
+      const cats = new Set(catsArr);
       if (!intersection) {
         intersection = cats;
       } else {
@@ -530,20 +532,21 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
       }
       if (!intersection || intersection.size === 0) return null;
     }
-    // Return any one of the common categories
-    return intersection.values().next().value || null;
+    // Prefer a category that has a known emoji, otherwise any
+    let chosen = null;
+    for (const c of intersection) { if (categoryEmojis[c]) { chosen = c; break; } }
+    if (!chosen) chosen = intersection.values().next().value || null;
+    return chosen;
   }
 
   function updateCategoryHighlights() {
     for (const [catAlias, catSel] of categoryNodeByAlias.entries()) {
-      const common = computeCommonCategoryForCategoryAlias(catAlias);
+      const common = commonCategoryForAlias(catAlias);
       const highlight = Boolean(common);
       catSel.classed('highlight', highlight);
-      const emojiChar = categoryEmojis[catSel.datum().id] || '';
-      // Update emoji text
+      const emojiChar = common ? (categoryEmojis[common] || '') : '';
       const textSel = catSel.select('text.cat-emoji');
-      textSel.text(highlight ? emojiChar : '');
-      // Update connected edges
+      textSel.text(emojiChar);
       const lines = linksByCategory.get(catAlias) || [];
       for (const ln of lines) ln.classed('highlight', highlight);
     }
@@ -606,7 +609,8 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
   // Initial check
   updateCategoryHighlights();
 
-  const padding = 24; // keep a small buffer to edges
+  const basePadding = Math.max(24, Math.round(Math.min(width, height) * 0.06));
+  const boundaryK = 0.2; // stronger boundary pushback
 
   function boundaryForce() {
     // Custom force to nudge nodes back within bounds
@@ -614,24 +618,54 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
       const r = radius(node);
       // Inflate boundary considering overlay circle size for word nodes
       const extra = node.type === 'word' ? (circleMetrics.get(node.alias)?.radius || 0) : 0;
-      if (node.x < padding + r + extra) node.vx += (padding + r + extra - node.x) * 0.05;
-      if (node.x > width - padding - r - extra) node.vx += (width - padding - r - extra - node.x) * 0.05;
-      if (node.y < padding + r + extra) node.vy += (padding + r + extra - node.y) * 0.05;
-      if (node.y > height - padding - r - extra) node.vy += (height - padding - r - extra - node.y) * 0.05;
+      if (node.x < basePadding + r + extra) node.vx += (basePadding + r + extra - node.x) * boundaryK;
+      if (node.x > width - basePadding - r - extra) node.vx += (width - basePadding - r - extra - node.x) * boundaryK;
+      if (node.y < basePadding + r + extra) node.vy += (basePadding + r + extra - node.y) * boundaryK;
+      if (node.y > height - basePadding - r - extra) node.vy += (height - basePadding - r - extra - node.y) * boundaryK;
     }
   }
 
   const simulation = d3.forceSimulation(nodes)
-    .force('link', d3.forceLink(links).id(d => d.alias).distance(60).strength(0.9))
-    .force('charge', d3.forceManyBody().strength(d => d.type === 'word' ? -240 - (circleMetrics.get(d.alias)?.radius || 0) * 2 : -240))
+    .force('link', d3.forceLink(links).id(d => d.alias).distance(60).strength(0.95))
+    .force('charge', d3.forceManyBody().strength(d => d.type === 'word' ? -260 - (circleMetrics.get(d.alias)?.radius || 0) * 2.2 : -260))
     .force('collide', d3.forceCollide().radius(d => {
       const extra = d.type === 'word' ? (circleMetrics.get(d.alias)?.radius || 0) : 0;
-      return radius(d) + 6 + extra;
-    }).strength(1.0))
+      return radius(d) + 10 + extra;
+    }).strength(1.2))
     .force('center', d3.forceCenter(width / 2, height / 2))
-    .force('x', d3.forceX(width / 2).strength(0.05))
-    .force('y', d3.forceY(height / 2).strength(0.05))
+    .force('x', d3.forceX(width / 2).strength(0.16))
+    .force('y', d3.forceY(height / 2).strength(0.16))
     .force('boundary', boundaryForce);
+
+  // Nuclear option: scale scene down if content cannot fit with padding
+  let lastScale = 1;
+  function fitSceneIfNeeded() {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const n of nodes) {
+      const r = radius(n);
+      const extra = n.type === 'word' ? (circleMetrics.get(n.alias)?.radius || 0) : 0;
+      const x1 = (n.x || 0) - (r + extra);
+      const y1 = (n.y || 0) - (r + extra);
+      const x2 = (n.x || 0) + (r + extra);
+      const y2 = (n.y || 0) + (r + extra);
+      if (x1 < minX) minX = x1;
+      if (y1 < minY) minY = y1;
+      if (x2 > maxX) maxX = x2;
+      if (y2 > maxY) maxY = y2;
+    }
+    const contentW = Math.max(1, maxX - minX);
+    const contentH = Math.max(1, maxY - minY);
+    const sx = (width - 2 * basePadding) / contentW;
+    const sy = (height - 2 * basePadding) / contentH;
+    const s = Math.min(sx, sy, 1);
+    if (s < 1 || lastScale !== 1) {
+      const cx = (minX + maxX) / 2;
+      const cy = (minY + maxY) / 2;
+      scene.transition().duration(250).ease(d3.easeCubicOut)
+        .attr('transform', `translate(${width / 2},${height / 2}) scale(${s}) translate(${-cx},${-cy})`);
+      lastScale = s;
+    }
+  }
 
   let firstTickLogged = false;
   simulation.on('tick', () => {
@@ -645,14 +679,15 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
       .attr('transform', d => {
         const r = radius(d);
         const extra = d.type === 'word' ? (circleMetrics.get(d.alias)?.radius || 0) : 0;
-        d.x = Math.max(padding + r + extra, Math.min(width - padding - r - extra, d.x));
-        d.y = Math.max(padding + r + extra, Math.min(height - padding - r - extra, d.y));
+        d.x = Math.max(basePadding + r + extra, Math.min(width - basePadding - r - extra, d.x));
+        d.y = Math.max(basePadding + r + extra, Math.min(height - basePadding - r - extra, d.y));
         return `translate(${d.x},${d.y})`;
       });
 
     // Keep word circles centered atop their assigned word nodes
     wordCircleG
       .attr('transform', d => `translate(${d.x},${d.y})`);
+    fitSceneIfNeeded();
     if (!firstTickLogged) {
       firstTickLogged = true;
       console.log('[Nodeword] Force layout started ticking');
@@ -666,6 +701,9 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     svg.attr('width', w).attr('height', h);
     simulation.force('center', d3.forceCenter(w / 2, h / 2));
     simulation.alpha(0.3).restart();
+    // Reset scene scale and refit after resize
+    scene.attr('transform', null);
+    lastScale = 1;
   };
   window.addEventListener('resize', onResize, { passive: true });
 }
