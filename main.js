@@ -616,7 +616,7 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
       const common = commonCategoryForAlias(catAlias);
       const highlight = Boolean(common);
       catSel.classed('highlight', highlight);
-      const emojiChar = common ? (categoryEmojis[common] || '') : '';
+      const emojiChar = common ? (categoryEmojis[common] || '✅') : '';
       const textSel = catSel.select('text.cat-emoji');
       textSel.text(emojiChar);
       // Category name label only after entire puzzle is solved
@@ -816,10 +816,8 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
   window.addEventListener('resize', onResize, { passive: true });
 
   function checkForSolved() {
-    const allSolved = Array.from(categoryNodeByAlias.keys()).every(catAlias => {
-      const textSel = categoryNodeByAlias.get(catAlias).select('text.cat-emoji');
-      return (textSel.text() || '').length > 0;
-    });
+    // Consider solved if each category node has a non-null common category under current assignment
+    const allSolved = Array.from(categoryNodeByAlias.keys()).every(catAlias => Boolean(commonCategoryForAlias(catAlias)));
     if (allSolved && !solved) {
       solved = true;
       setInteractivity(false);
@@ -827,10 +825,8 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
       if (statusEl) statusEl.textContent = 'Puzzle solved!';
       const btn = document.getElementById('nextBtn');
       if (btn) btn.style.visibility = 'visible';
-      // Ensure labels are visible upon solve
-      for (const [, catSel] of categoryNodeByAlias.entries()) {
-        // catLabel texts are set in updateCategoryHighlights; just ensure not empty
-      }
+      // Reveal labels and ensure emoji/text reflects the chosen intersection category
+      updateCategoryHighlights();
     }
   }
 }
