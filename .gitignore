@@ -1,0 +1,17 @@
+# Dependencies
+node_modules/
+
+# Local dev/cache
+.wrangler/
+.parcel-cache/
+dist/
+build/
+
+# Env files
+.env
+.env.*
+
+# macOS
+.DS_Store
+
+
