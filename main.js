@@ -386,6 +386,9 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     edges: links.length
   });
 
+  // Set of categories that exist in THIS puzzle (restrict emoji logic to these)
+  const puzzleCategories = new Set(nodes.filter(n => n.type === 'category').map(n => n.id));
+
   const link = scene.append('g')
     .attr('stroke-linecap', 'round')
     .selectAll('line')
@@ -532,10 +535,14 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
       }
       if (!intersection || intersection.size === 0) return null;
     }
+    // Restrict to categories present in this puzzle only
+    const filtered = new Set();
+    for (const c of intersection) if (puzzleCategories.has(c)) filtered.add(c);
+    if (filtered.size === 0) return null;
     // Prefer a category that has a known emoji, otherwise any
     let chosen = null;
-    for (const c of intersection) { if (categoryEmojis[c]) { chosen = c; break; } }
-    if (!chosen) chosen = intersection.values().next().value || null;
+    for (const c of filtered) { if (categoryEmojis[c]) { chosen = c; break; } }
+    if (!chosen) chosen = filtered.values().next().value || null;
     return chosen;
   }
 
