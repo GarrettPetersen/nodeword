@@ -166,6 +166,42 @@ function generatePuzzleGraph(wordToCategories, targetWordCount = 12, maxDegree =
 
     // Greedily grow the graph while keeping degrees <= maxDegree and maintaining connectivity
     while (wordSet.size < targetWordCount) {
+      // Special strategy for the final word: try to add a word that connects to 2 categories
+      if (wordSet.size === targetWordCount - 1) {
+        const candidateWords = shuffle(allWords.filter(w => !wordSet.has(w)).slice());
+        let addedFinal = false;
+        for (const w of candidateWords) {
+          const cats = (wordToCategories[w] || []).slice();
+          if (cats.length < 2) continue;
+          // Prefer categories already in the graph to improve connectivity
+          const catScore = (c) => (categorySet.has(c) ? 1 : 0);
+          cats.sort((a, b) => catScore(b) - catScore(a));
+          // Try pairs of categories; ensure at least one is already present
+          for (let i = 0; i < cats.length && !addedFinal; i++) {
+            for (let j = i + 1; j < cats.length; j++) {
+              const c1 = cats[i], c2 = cats[j];
+              if (!categoryToWords.has(c1) || !categoryToWords.has(c2)) continue;
+              if (!categorySet.has(c1) && !categorySet.has(c2)) continue; // keep connectivity
+              // Try to add edges (w,c1) and (w,c2) atomically under constraints
+              if (!addEdge(w, c1)) continue;
+              if (!addEdge(w, c2)) {
+                removeEdge(w, c1);
+                continue;
+              }
+              // success
+              addedFinal = true;
+              break;
+            }
+          }
+          if (addedFinal) break;
+        }
+        if (addedFinal) {
+          // Completed graph with enhanced connectivity
+          break;
+        }
+        // If none found, fall back to normal growth below
+      }
+
       const pickExistingWord = Math.random() < 0.5 || wordSet.size === 1;
       const anchorWord = pickExistingWord ? choice(Array.from(wordSet)) : choice(allWords);
       const availableCategories = (wordToCategories[anchorWord] || []).slice();
