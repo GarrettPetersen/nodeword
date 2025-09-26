@@ -209,6 +209,29 @@ function generatePuzzleGraph(wordToCategories, targetWordCount = 12, maxDegree =
       }
       newlyAdded.push(c);
     }
+    return newlyAdded;
+  }
+
+  function ensureCategoryCoverage(category, excludeWord) {
+    const added = [];
+    const connectees = [];
+    for (const w of wordSet) {
+      if (w === excludeWord) continue;
+      const cats = wordToCategories[w] || [];
+      if (cats.includes(category) && !edges.has(w + "||" + category)) {
+        connectees.push(w);
+      }
+    }
+    for (const w of connectees) {
+      if (!addEdge(w, category)) {
+        // rollback
+        for (let i = added.length - 1; i >= 0; i--) {
+          removeEdge(added[i], category);
+        }
+        return false;
+      }
+      added.push(w);
+    }
     return true;
   }
 
