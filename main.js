@@ -816,17 +816,25 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
   window.addEventListener('resize', onResize, { passive: true });
 
   function checkForSolved() {
-    // Consider solved if each category node has a non-null common category under current assignment
-    const allSolved = Array.from(categoryNodeByAlias.keys()).every(catAlias => Boolean(commonCategoryForAlias(catAlias)));
-    if (allSolved && !solved) {
-      solved = true;
-      setInteractivity(false);
-      const statusEl = document.getElementById('status');
-      if (statusEl) statusEl.textContent = 'Puzzle solved!';
-      const btn = document.getElementById('nextBtn');
-      if (btn) btn.style.visibility = 'visible';
-      // Reveal labels and ensure emoji/text reflects the chosen intersection category
-      updateCategoryHighlights();
+    // Count diamonds without a valid common category under current assignment
+    let unsolvedCount = 0;
+    for (const catAlias of categoryNodeByAlias.keys()) {
+      if (!commonCategoryForAlias(catAlias)) unsolvedCount++;
+    }
+    if (unsolvedCount === 0) {
+      if (!solved) {
+        console.log('[Nodeword] SOLVED: all diamonds complete');
+        solved = true;
+        setInteractivity(false);
+        const statusEl = document.getElementById('status');
+        if (statusEl) statusEl.textContent = 'Puzzle solved!';
+        const btn = document.getElementById('nextBtn');
+        if (btn) btn.style.visibility = 'visible';
+        // Reveal labels and ensure emoji/text reflects the chosen intersection category
+        updateCategoryHighlights();
+      }
+    } else {
+      console.log('[Nodeword] NOT SOLVED: remaining diamonds', unsolvedCount);
     }
   }
 }
