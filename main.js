@@ -506,7 +506,7 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     .attr('class', d => `node ${d.type}`)
     .call(d3.drag()
       .on('start', (event, d) => {
-        if (!event.active) simulation.alphaTarget(0.3).restart();
+        if (!event.active) simulation.alphaTarget(0.15).restart();
         d.fx = d.x; d.fy = d.y;
       })
       .on('drag', (event, d) => {
@@ -784,7 +784,7 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
 
   const computePadding = () => Math.max(24, Math.round(Math.min(width, height) * 0.06));
   let basePadding = computePadding();
-  const boundaryK = 0.2; // stronger boundary pushback
+  const boundaryK = 0.12; // moderated boundary pushback
 
   function boundaryForce() {
     // Custom force to nudge nodes back within bounds
@@ -800,15 +800,16 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
   }
 
   const simulation = d3.forceSimulation(nodes)
-    .force('link', d3.forceLink(links).id(d => d.alias).distance(60).strength(0.95))
-    .force('charge', d3.forceManyBody().strength(d => d.type === 'word' ? -260 - (circleMetrics.get(d.alias)?.radius || 0) * 2.2 : -260))
+    .velocityDecay(0.55)
+    .force('link', d3.forceLink(links).id(d => d.alias).distance(64).strength(0.85))
+    .force('charge', d3.forceManyBody().strength(d => d.type === 'word' ? -200 - (circleMetrics.get(d.alias)?.radius || 0) * 1.8 : -200))
     .force('collide', d3.forceCollide().radius(d => {
       const extra = d.type === 'word' ? (circleMetrics.get(d.alias)?.radius || 0) : 0;
       return radius(d) + 10 + extra;
-    }).strength(1.2))
+    }).strength(1.0))
     .force('center', d3.forceCenter(width / 2, height / 2))
-    .force('x', d3.forceX(width / 2).strength(0.16))
-    .force('y', d3.forceY(height / 2).strength(0.16))
+    .force('x', d3.forceX(width / 2).strength(0.10))
+    .force('y', d3.forceY(height / 2).strength(0.10))
     .force('boundary', boundaryForce);
 
   // Nuclear option: iterative auto-fit scaling
