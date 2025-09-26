@@ -446,15 +446,63 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     .attr('dominant-baseline', 'central')
     .text('');
 
-  // Build word-circle overlay assignments: shuffle words and assign to word-nodes
+  // Build word-circle overlay assignments with minimization of pre-solved categories
   const wordNodes = nodes.filter(n => n.type === 'word');
-  const wordLabels = shuffle(aliasGraph.nodes.filter(n => n.type === 'word').map(n => n.id).slice());
-  const assignment = new Map(); // node.alias -> actual word string
-  for (let i = 0; i < wordNodes.length; i++) {
-    const nodeAlias = wordNodes[i].alias;
-    const assignedWord = wordLabels[i % wordLabels.length];
-    assignment.set(nodeAlias, assignedWord);
+  const wordLabelsBase = aliasGraph.nodes.filter(n => n.type === 'word').map(n => n.id);
+
+  // Precompute connected word-aliases per category-alias using alias links
+  const catToWordAliases = new Map();
+  for (const l of links) {
+    const catAlias = l.target; // category alias (string at this point)
+    const wordAlias = l.source; // word alias
+    const arr = catToWordAliases.get(catAlias) || [];
+    arr.push(wordAlias);
+    catToWordAliases.set(catAlias, arr);
   }
+
+  function countSolvedForAssignment(assignMap) {
+    let solved = 0;
+    for (const [catAlias, wordAliases] of catToWordAliases.entries()) {
+      if (!wordAliases || wordAliases.length === 0) continue;
+      let intersection = null;
+      for (const wa of wordAliases) {
+        const w = assignMap.get(wa);
+        const catsArr = wordToCategories[w] || [];
+        const cats = new Set(catsArr);
+        if (!intersection) {
+          intersection = cats;
+        } else {
+          const next = new Set();
+          for (const c of intersection) if (cats.has(c)) next.add(c);
+          intersection = next;
+        }
+        if (!intersection || intersection.size === 0) break;
+      }
+      if (!intersection || intersection.size === 0) continue;
+      // Restrict to categories in this puzzle
+      let hasPuzzleCat = false;
+      for (const c of intersection) { if (puzzleCategories.has(c)) { hasPuzzleCat = true; break; } }
+      if (hasPuzzleCat) solved++;
+    }
+    return solved;
+  }
+
+  let bestAssignment = null;
+  let bestSolved = Infinity;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const labels = shuffle(wordLabelsBase.slice());
+    const assign = new Map();
+    for (let i = 0; i < wordNodes.length; i++) {
+      assign.set(wordNodes[i].alias, labels[i % labels.length]);
+    }
+    const solvedCount = countSolvedForAssignment(assign);
+    if (solvedCount < bestSolved) {
+      bestSolved = solvedCount;
+      bestAssignment = assign;
+      if (bestSolved === 0) break;
+    }
+  }
+  const assignment = bestAssignment || new Map();
 
   // Precompute circle metrics and per-node extra repulsion based on circle size
   const circleMetrics = new Map(); // node.alias -> {radius,fontSize,parts}
@@ -488,6 +536,7 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
 
   // Click handling for swapping circles between nodes
   let selected = null; // d (node datum) for selected word-circle
+  let solved = false;
 
   function deselect() {
     selected = null;
@@ -611,10 +660,15 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     updateCategoryHighlights();
   });
 
+  function setInteractivity(enabled) {
+    wordCircleG.style('pointer-events', enabled ? 'all' : 'none');
+  }
+
   // Click anywhere else to clear selection
-  svg.on('click', () => deselect());
+  svg.on('click', () => { if (!solved) deselect(); });
   // Initial check
   updateCategoryHighlights();
+  checkForSolved();
 
   const basePadding = Math.max(24, Math.round(Math.min(width, height) * 0.06));
   const boundaryK = 0.2; // stronger boundary pushback
@@ -713,6 +767,21 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     lastScale = 1;
   };
   window.addEventListener('resize', onResize, { passive: true });
+
+  function checkForSolved() {
+    const allSolved = Array.from(categoryNodeByAlias.keys()).every(catAlias => {
+      const textSel = categoryNodeByAlias.get(catAlias).select('text.cat-emoji');
+      return (textSel.text() || '').length > 0;
+    });
+    if (allSolved && !solved) {
+      solved = true;
+      setInteractivity(false);
+      const statusEl = document.getElementById('status');
+      if (statusEl) statusEl.textContent = 'Puzzle solved!';
+      const btn = document.getElementById('nextBtn');
+      if (btn) btn.style.visibility = 'visible';
+    }
+  }
 }
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -762,6 +831,7 @@ document.addEventListener("DOMContentLoaded", () => {
     console.log('[Nodeword] Next puzzle clicked');
     generateAndRender();
   });
+  if (nextBtn) nextBtn.style.visibility = 'hidden';
   generateAndRender();
 });
 

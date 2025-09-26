@@ -61,6 +61,12 @@ h1 {
   justify-content: center;
   gap: 12px;
 }
+#status {
+  margin-top: 12px;
+  text-align: center;
+  color: var(--brand-2);
+  font-weight: 700;
+}
 
 button.primary {
   appearance: none;
