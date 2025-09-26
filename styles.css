@@ -137,16 +137,16 @@ a:hover {
 }
 
 .word-circle text {
-  fill: #0b0e1a;
+  fill: var(--text);
   font-weight: 700;
   text-anchor: middle;
   dominant-baseline: central;
 }
 
 .word-circle circle {
-  fill: #ffffff;
-  stroke: rgba(0,0,0,0.6);
-  stroke-width: 1px;
+  fill: var(--brand);
+  stroke: var(--brand-2);
+  stroke-width: 2px;
 }
 
 .graph {

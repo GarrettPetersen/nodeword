@@ -305,16 +305,77 @@ function toAliasGraph(graph) {
 }
 
 function measureWordCircle(word) {
-  // Heuristic: base radius plus per-character growth, clamped
-  const base = 18;
-  const perChar = 1.2;
-  const maxR = 44;
-  const r = Math.min(maxR, base + Math.ceil(String(word).length * perChar));
-  // Font size scales with radius
-  const font = Math.max(10, Math.min(16, Math.floor(r * 0.5)));
-  // Attempt simple wrapping by splitting on spaces and balancing lines
-  const parts = String(word).split(/\s+/);
-  return { radius: r, fontSize: font, parts };
+  // Iteratively determine radius and font size to ensure content fits
+  const text = String(word).trim();
+  const tokens = text.split(/\s+/);
+  const minR = 18;
+  const maxR = 64;
+  const minFont = 9;
+  const maxFont = 18;
+
+  // Start with a guess based on characters
+  let r = Math.min(maxR, Math.max(minR, 16 + Math.ceil(text.length * 0.9)));
+  let font = Math.min(maxFont, Math.max(minFont, Math.floor(r * 0.45)));
+
+  function wrapForRadiusFont(radius, fontPx) {
+    // Estimate max chars per line by circle chord width at typical line height
+    const maxLines = Math.max(1, Math.floor((radius * 1.6) / (fontPx + 2)));
+    const maxWidthPx = radius * 1.6; // slightly less than diameter to allow padding
+    const avgCharPx = fontPx * 0.6; // rough average character width factor
+    const maxChars = Math.max(3, Math.floor(maxWidthPx / avgCharPx));
+
+    const lines = [];
+    let line = '';
+    for (const tk of tokens) {
+      const next = line ? line + ' ' + tk : tk;
+      if (next.length <= maxChars) {
+        line = next;
+      } else {
+        if (line) lines.push(line);
+        line = tk;
+      }
+    }
+    if (line) lines.push(line);
+    // If we exceeded max lines, reflow by splitting longest lines
+    while (lines.length > maxLines) {
+      // split the longest line into two
+      let idx = 0; let longestLen = 0;
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].length > longestLen) { longestLen = lines[i].length; idx = i; }
+      }
+      const words = lines[idx].split(' ');
+      if (words.length <= 1) break;
+      const half = Math.ceil(words.length / 2);
+      const first = words.slice(0, half).join(' ');
+      const second = words.slice(half).join(' ');
+      lines.splice(idx, 1, first, second);
+    }
+
+    const totalHeight = lines.length * (fontPx + 2);
+    const fitsVertically = totalHeight <= radius * 1.6;
+    const widest = Math.max(...lines.map(l => l.length), 0);
+    const fitsHorizontally = widest * avgCharPx <= maxWidthPx;
+    const fits = fitsHorizontally && fitsVertically;
+    return { lines, fits, totalHeight };
+  }
+
+  for (let i = 0; i < 20; i++) {
+    const attempt = wrapForRadiusFont(r, font);
+    if (attempt.fits) {
+      const startY = -attempt.totalHeight / 2 + font / 2;
+      return { radius: r, fontSize: font, parts: attempt.lines, startY };
+    }
+    // If doesn't fit, first try increasing radius up to cap, else shrink font
+    if (r < maxR) {
+      r += 4;
+    } else if (font > minFont) {
+      font -= 1;
+    } else {
+      break;
+    }
+  }
+  const fallback = { radius: Math.min(maxR, Math.max(minR, r)), fontSize: Math.max(minFont, Math.min(maxFont, font)), parts: [text], startY: 0 };
+  return fallback;
 }
 
 function renderForceGraph(container, aliasGraph) {
@@ -401,25 +462,11 @@ function renderForceGraph(container, aliasGraph) {
     const g = d3.select(this);
     const w = assignment.get(d.alias);
     const m = circleMetrics.get(d.alias);
-    const maxLineChars = Math.max(3, Math.floor(m.radius * 0.6 / 6));
-    const parts = [];
-    let line = '';
-    for (const token of m.parts) {
-      if ((line + ' ' + token).trim().length <= maxLineChars) {
-        line = (line ? line + ' ' : '') + token;
-      } else {
-        if (line) parts.push(line);
-        line = token;
-      }
-    }
-    if (line) parts.push(line);
-    const totalHeight = parts.length * (m.fontSize + 2) - 2;
-    const startY = -totalHeight / 2 + m.fontSize / 2;
-    for (let i = 0; i < parts.length; i++) {
+    for (let i = 0; i < m.parts.length; i++) {
       g.append('text')
-        .attr('y', startY + i * (m.fontSize + 2))
+        .attr('y', m.startY + i * (m.fontSize + 2))
         .style('font-size', m.fontSize + 'px')
-        .text(parts[i]);
+        .text(m.parts[i]);
     }
   });
 
