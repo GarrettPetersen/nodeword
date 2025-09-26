@@ -214,47 +214,103 @@ async function fetchWordData() {
   return res.json();
 }
 
-function renderGraph(container, graph) {
-  const words = new Set(graph.edges.map((e) => e.word));
-  const categories = new Set(graph.edges.map((e) => e.category));
+function toAliasGraph(graph) {
+  const wordAliases = new Map();
+  const catAliases = new Map();
+  const nodes = [];
 
+  graph.words.forEach((w, i) => {
+    const alias = `W${i + 1}`;
+    wordAliases.set(w, alias);
+    nodes.push({ id: w, alias, type: 'word' });
+  });
+  graph.categories.forEach((c, i) => {
+    const alias = `C${i + 1}`;
+    catAliases.set(c, alias);
+    nodes.push({ id: c, alias, type: 'category' });
+  });
+
+  const links = graph.edges.map(e => ({
+    source: wordAliases.get(e.word),
+    target: catAliases.get(e.category)
+  }));
+
+  return { nodes, links };
+}
+
+function renderForceGraph(container, aliasGraph) {
   container.innerHTML = '';
-  const wrapper = document.createElement('div');
-  wrapper.className = 'graph';
+  const svg = d3.select(container).append('svg').attr('class', 'graph-svg');
+  const width = container.clientWidth;
+  const height = Math.min(720, Math.max(480, Math.floor(window.innerHeight * 0.7)));
+  svg.attr('width', width).attr('height', height);
 
-  const left = document.createElement('div');
-  const right = document.createElement('div');
+  const nodes = aliasGraph.nodes.map(n => ({ ...n }));
+  const links = aliasGraph.links.map(l => ({ ...l }));
 
-  const hWords = document.createElement('h3'); hWords.textContent = 'Words';
-  const hCats = document.createElement('h3'); hCats.textContent = 'Categories';
+  const link = svg.append('g')
+    .attr('stroke-linecap', 'round')
+    .selectAll('line')
+    .data(links)
+    .enter()
+    .append('line')
+    .attr('class', 'link');
 
-  const wordList = document.createElement('div'); wordList.className = 'list';
-  for (const w of words) {
-    const chip = document.createElement('span'); chip.className = 'chip'; chip.textContent = w;
-    wordList.appendChild(chip);
-  }
+  const node = svg.append('g')
+    .selectAll('g')
+    .data(nodes, d => d.alias)
+    .enter()
+    .append('g')
+    .attr('class', d => `node ${d.type}`)
+    .call(d3.drag()
+      .on('start', (event, d) => {
+        if (!event.active) simulation.alphaTarget(0.3).restart();
+        d.fx = d.x; d.fy = d.y;
+      })
+      .on('drag', (event, d) => {
+        d.fx = event.x; d.fy = event.y;
+      })
+      .on('end', (event, d) => {
+        if (!event.active) simulation.alphaTarget(0);
+        d.fx = null; d.fy = null;
+      })
+    );
 
-  const catList = document.createElement('div'); catList.className = 'list';
-  for (const c of categories) {
-    const chip = document.createElement('span'); chip.className = 'chip'; chip.textContent = c;
-    catList.appendChild(chip);
-  }
+  const radius = d => d.type === 'category' ? 16 : 12;
 
-  left.appendChild(hWords); left.appendChild(wordList);
-  right.appendChild(hCats); right.appendChild(catList);
+  node.append('circle')
+    .attr('r', radius);
 
-  wrapper.appendChild(left); wrapper.appendChild(right);
+  node.append('text')
+    .text(d => d.alias);
 
-  const edgeTitle = document.createElement('h3'); edgeTitle.textContent = 'Connections';
-  const edgeList = document.createElement('div'); edgeList.className = 'list';
-  for (const e of graph.edges) {
-    const tag = document.createElement('span'); tag.className = 'edge'; tag.textContent = `${e.word} ↔ ${e.category}`;
-    edgeList.appendChild(tag);
-  }
+  const simulation = d3.forceSimulation(nodes)
+    .force('link', d3.forceLink(links).id(d => d.alias).distance(60).strength(0.9))
+    .force('charge', d3.forceManyBody().strength(-220))
+    .force('collide', d3.forceCollide().radius(d => radius(d) + 2).strength(0.9))
+    .force('center', d3.forceCenter(width / 2, height / 2))
+    .force('x', d3.forceX(width / 2).strength(0.05))
+    .force('y', d3.forceY(height / 2).strength(0.05));
 
-  container.appendChild(wrapper);
-  container.appendChild(edgeTitle);
-  container.appendChild(edgeList);
+  simulation.on('tick', () => {
+    link
+      .attr('x1', d => d.source.x)
+      .attr('y1', d => d.source.y)
+      .attr('x2', d => d.target.x)
+      .attr('y2', d => d.target.y);
+    node
+      .attr('transform', d => `translate(${d.x},${d.y})`);
+  });
+
+  // Resize handling for responsiveness
+  const onResize = () => {
+    const w = container.clientWidth;
+    const h = Math.min(720, Math.max(480, Math.floor(window.innerHeight * 0.7)));
+    svg.attr('width', w).attr('height', h);
+    simulation.force('center', d3.forceCenter(w / 2, h / 2));
+    simulation.alpha(0.3).restart();
+  };
+  window.addEventListener('resize', onResize, { passive: true });
 }
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -276,7 +332,8 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       if (!wordData) wordData = await fetchWordData();
       const graph = generatePuzzleGraph(wordData, 12, 4, 6000);
-      renderGraph(container, graph);
+      const aliasGraph = toAliasGraph(graph);
+      renderForceGraph(container, aliasGraph);
     } catch (err) {
       container.textContent = 'Failed to generate puzzle.';
       console.error(err);

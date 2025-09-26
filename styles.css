@@ -98,6 +98,39 @@ a:hover {
   text-align: left;
 }
 
+.graph-svg {
+  width: 100%;
+  height: min(70vh, 720px);
+  display: block;
+}
+
+.link {
+  stroke: rgba(255,255,255,0.25);
+  stroke-width: 1.5;
+}
+
+.node circle {
+  stroke: rgba(255,255,255,0.9);
+  stroke-width: 1px;
+}
+
+.node.word circle {
+  fill: rgba(0,229,255,0.7);
+}
+
+.node.category circle {
+  fill: rgba(124,77,255,0.7);
+}
+
+.node text {
+  fill: #0b0e1a;
+  font-weight: 700;
+  font-size: 12px;
+  pointer-events: none;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+
 .graph {
   display: grid;
   grid-template-columns: 1fr 1fr;
