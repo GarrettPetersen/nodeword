@@ -164,6 +164,23 @@ function generatePuzzleGraph(wordToCategories, targetWordCount = 12, maxDegree =
     return false;
   }
 
+  function violatesCoverageRule() {
+    // For each category present in the puzzle, ensure that every selected word
+    // that has this category is actually connected to it in the graph.
+    for (const category of categorySet) {
+      const connectedWords = new Set(getCategoryNeighbors(category));
+      for (const word of wordSet) {
+        const cats = wordToCategories[word] || [];
+        if (cats.includes(category)) {
+          if (!connectedWords.has(word)) {
+            return true; // word should connect to category but doesn't
+          }
+        }
+      }
+    }
+    return false;
+  }
+
   function attemptAddWordWithRequiredCategories(newWord, requiredCatsArray) {
     const newlyAdded = [];
     const requiredList = Array.from(new Set(requiredCatsArray || []));
@@ -296,7 +313,7 @@ function generatePuzzleGraph(wordToCategories, targetWordCount = 12, maxDegree =
       if (!isContiguous()) break;
     }
 
-    if (wordSet.size >= targetWordCount && isContiguous() && !violatesPairRule()) {
+    if (wordSet.size >= targetWordCount && isContiguous() && !violatesPairRule() && !violatesCoverageRule()) {
       // Build final structure
       const words = Array.from(wordSet);
       const categories = Array.from(categorySet);
