@@ -139,6 +139,62 @@ function generatePuzzleGraph(wordToCategories, targetWordCount = 12, maxDegree =
     return visitedW.size === wordSet.size; // we only require words to be connected via categories
   }
 
+  function violatesPairRule() {
+    // Ensure no two words share more than one category within the current puzzle
+    const words = Array.from(wordSet);
+    for (let i = 0; i < words.length; i++) {
+      const wi = words[i];
+      const ci = currentWordToCats.get(wi) || new Set();
+      if (ci.size <= 1) continue;
+      for (let j = i + 1; j < words.length; j++) {
+        const wj = words[j];
+        const cj = currentWordToCats.get(wj) || new Set();
+        if (cj.size <= 1) continue;
+        // Count intersection quickly
+        let shared = 0;
+        const [small, large] = ci.size < cj.size ? [ci, cj] : [cj, ci];
+        for (const c of small) {
+          if (large.has(c)) {
+            shared++;
+            if (shared > 1) return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  function attemptAddWordWithRequiredCategories(newWord, requiredCatsArray) {
+    const newlyAdded = [];
+    const requiredList = Array.from(new Set(requiredCatsArray || []));
+    const wordCats = new Set(wordToCategories[newWord] || []);
+    // Build the full set of categories this word must connect to: required + any existing puzzle categories it belongs to
+    const needed = new Set(requiredList);
+    for (const c of categorySet) {
+      if (wordCats.has(c)) needed.add(c);
+    }
+    // Pre-check capacity on the word
+    const wordCapacity = maxDegree - (wordDegree.get(newWord) || 0);
+    if (needed.size > wordCapacity) return false;
+    // Pre-check capacity on each category
+    for (const c of needed) {
+      if ((categoryDegree.get(c) || 0) >= maxDegree) return false;
+    }
+    // Add edges in order: required first, then the rest
+    const ordered = requiredList.concat(Array.from(needed).filter(c => !requiredList.includes(c)));
+    for (const c of ordered) {
+      if (!addEdge(newWord, c)) {
+        // rollback
+        for (let i = newlyAdded.length - 1; i >= 0; i--) {
+          removeEdge(newWord, newlyAdded[i]);
+        }
+        return false;
+      }
+      newlyAdded.push(c);
+    }
+    return true;
+  }
+
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     // Reset graph state each attempt
     wordSet.clear(); categorySet.clear(); edges.clear(); wordDegree.clear(); categoryDegree.clear();
@@ -182,14 +238,10 @@ function generatePuzzleGraph(wordToCategories, targetWordCount = 12, maxDegree =
               const c1 = cats[i], c2 = cats[j];
               if (!categoryToWords.has(c1) || !categoryToWords.has(c2)) continue;
               if (!categorySet.has(c1) && !categorySet.has(c2)) continue; // keep connectivity
-              // Try to add edges (w,c1) and (w,c2) atomically under constraints
-              if (!addEdge(w, c1)) continue;
-              if (!addEdge(w, c2)) {
-                removeEdge(w, c1);
-                continue;
-              }
-              // success
-              addedFinal = true;
+          // Try to add the word with both categories (and any other applicable puzzle categories)
+          if (attemptAddWordWithRequiredCategories(w, [c1, c2])) {
+            addedFinal = true;
+          }
               break;
             }
           }
@@ -228,7 +280,7 @@ function generatePuzzleGraph(wordToCategories, targetWordCount = 12, maxDegree =
             }
             continue;
           }
-          if (addEdge(w, category)) {
+          if (attemptAddWordWithRequiredCategories(w, [category])) {
             foundNewWord = true;
             expanded = true;
             break;
@@ -244,7 +296,7 @@ function generatePuzzleGraph(wordToCategories, targetWordCount = 12, maxDegree =
       if (!isContiguous()) break;
     }
 
-    if (wordSet.size >= targetWordCount && isContiguous()) {
+    if (wordSet.size >= targetWordCount && isContiguous() && !violatesPairRule()) {
       // Build final structure
       const words = Array.from(wordSet);
       const categories = Array.from(categorySet);
@@ -505,7 +557,7 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
 
   let bestAssignment = null;
   let bestSolved = Infinity;
-  for (let attempt = 0; attempt < 5; attempt++) {
+  for (let attempt = 0; attempt < 10; attempt++) {
     const labels = shuffle(wordLabelsBase.slice());
     const assign = new Map();
     for (let i = 0; i < wordNodes.length; i++) {
@@ -677,6 +729,7 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     // Visual: selected state cleared, and ensure both circles fly to their node positions on next tick
     deselect();
     updateCategoryHighlights();
+    checkForSolved();
   });
 
   function setInteractivity(enabled) {
