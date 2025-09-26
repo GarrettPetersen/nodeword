@@ -12,6 +12,7 @@ const CATEGORIES_TO_REMOVE = new Set([
   '2020s',
   '2010s',
   'Things American',
+  "Flower-class Corvettes"
 ]);
 
 function parseArgs(argv) {
