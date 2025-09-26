@@ -41,6 +41,26 @@ function generatePuzzleGraph(wordToCategories, targetWordCount = 12, maxDegree =
   const currentWordToCats = new Map(); // word -> Set(categories)
   const currentCatToWords = new Map(); // category -> Set(words)
 
+  function removeEdge(word, category) {
+    const key = word + "||" + category;
+    if (!edges.has(key)) return;
+    edges.delete(key);
+    wordDegree.set(word, (wordDegree.get(word) || 1) - 1);
+    categoryDegree.set(category, (categoryDegree.get(category) || 1) - 1);
+    const wc = currentWordToCats.get(word);
+    if (wc) {
+      wc.delete(category);
+      if (wc.size === 0) currentWordToCats.delete(word);
+    }
+    const cw = currentCatToWords.get(category);
+    if (cw) {
+      cw.delete(word);
+      if (cw.size === 0) currentCatToWords.delete(category);
+    }
+    if (!currentCatToWords.has(category)) categorySet.delete(category);
+    if (!currentWordToCats.has(word)) wordSet.delete(word);
+  }
+
   function addEdge(word, category) {
     const key = word + "||" + category;
     if (edges.has(key)) return true;
@@ -125,10 +145,24 @@ function generatePuzzleGraph(wordToCategories, targetWordCount = 12, maxDegree =
     currentWordToCats.clear(); currentCatToWords.clear();
 
     const startWord = choice(allWords);
-    const startCats = wordToCategories[startWord];
+    const startCats = (wordToCategories[startWord] || []).slice();
     if (!startCats || startCats.length === 0) continue;
-    const firstCategory = choice(startCats);
-    if (!addEdge(startWord, firstCategory)) continue;
+    shuffle(startCats);
+    let seeded = false;
+    for (const firstCategory of startCats) {
+      if (!addEdge(startWord, firstCategory)) { continue; }
+      const candidates = Array.from(categoryToWords.get(firstCategory) || []);
+      shuffle(candidates);
+      let addedSecond = false;
+      for (const w of candidates) {
+        if (w === startWord) continue;
+        if (addEdge(w, firstCategory)) { addedSecond = true; break; }
+      }
+      if (addedSecond) { seeded = true; break; }
+      // rollback and try another category for the start word
+      removeEdge(startWord, firstCategory);
+    }
+    if (!seeded) continue;
 
     // Greedily grow the graph while keeping degrees <= maxDegree and maintaining connectivity
     while (wordSet.size < targetWordCount) {
@@ -167,25 +201,7 @@ function generatePuzzleGraph(wordToCategories, targetWordCount = 12, maxDegree =
 
         if (foundNewWord) break;
         // rollback edge anchor->category if it didn't lead to expansion
-        const key = anchorWord + "||" + category;
-        if (edges.has(key)) {
-          edges.delete(key);
-          wordDegree.set(anchorWord, (wordDegree.get(anchorWord) || 1) - 1);
-          categoryDegree.set(category, (categoryDegree.get(category) || 1) - 1);
-          // Update adjacency maps
-          const wc = currentWordToCats.get(anchorWord);
-          if (wc) {
-            wc.delete(category);
-            if (wc.size === 0) currentWordToCats.delete(anchorWord);
-          }
-          const cw = currentCatToWords.get(category);
-          if (cw) {
-            cw.delete(anchorWord);
-            if (cw.size === 0) currentCatToWords.delete(category);
-          }
-          if (!currentCatToWords.has(category)) categorySet.delete(category);
-          if (!currentWordToCats.has(anchorWord)) wordSet.delete(anchorWord);
-        }
+        removeEdge(anchorWord, category);
       }
 
       if (!expanded) break;
@@ -209,9 +225,17 @@ function generatePuzzleGraph(wordToCategories, targetWordCount = 12, maxDegree =
 }
 
 async function fetchWordData() {
-  const res = await fetch('/data/words.json');
+  console.log('[Nodeword] Fetching words.json…');
+  let res = await fetch('/data/words.json');
+  if (!res.ok) {
+    console.warn('[Nodeword] Fetch /data/words.json failed with', res.status, '— retrying relative path');
+    res = await fetch('data/words.json');
+  }
   if (!res.ok) throw new Error('Failed to load words.json');
-  return res.json();
+  const data = await res.json();
+  const totalWords = Object.keys(data || {}).length;
+  console.log('[Nodeword] Loaded words.json with', totalWords, 'entries');
+  return data;
 }
 
 function toAliasGraph(graph) {
@@ -242,11 +266,17 @@ function renderForceGraph(container, aliasGraph) {
   container.innerHTML = '';
   const svg = d3.select(container).append('svg').attr('class', 'graph-svg');
   const width = container.clientWidth;
-  const height = Math.min(720, Math.max(480, Math.floor(window.innerHeight * 0.7)));
+  const height = Math.min(820, Math.max(520, Math.floor(window.innerHeight * 0.75)));
   svg.attr('width', width).attr('height', height);
 
   const nodes = aliasGraph.nodes.map(n => ({ ...n }));
   const links = aliasGraph.links.map(l => ({ ...l }));
+
+  console.log('[Nodeword] Rendering force graph:', {
+    words: nodes.filter(n => n.type === 'word').length,
+    categories: nodes.filter(n => n.type === 'category').length,
+    edges: links.length
+  });
 
   const link = svg.append('g')
     .attr('stroke-linecap', 'round')
@@ -284,28 +314,53 @@ function renderForceGraph(container, aliasGraph) {
   node.append('text')
     .text(d => d.alias);
 
+  const padding = 24; // keep a small buffer to edges
+
+  function boundaryForce() {
+    // Custom force to nudge nodes back within bounds
+    for (const node of nodes) {
+      const r = radius(node);
+      if (node.x < padding + r) node.vx += (padding + r - node.x) * 0.05;
+      if (node.x > width - padding - r) node.vx += (width - padding - r - node.x) * 0.05;
+      if (node.y < padding + r) node.vy += (padding + r - node.y) * 0.05;
+      if (node.y > height - padding - r) node.vy += (height - padding - r - node.y) * 0.05;
+    }
+  }
+
   const simulation = d3.forceSimulation(nodes)
     .force('link', d3.forceLink(links).id(d => d.alias).distance(60).strength(0.9))
-    .force('charge', d3.forceManyBody().strength(-220))
-    .force('collide', d3.forceCollide().radius(d => radius(d) + 2).strength(0.9))
+    .force('charge', d3.forceManyBody().strength(-240))
+    .force('collide', d3.forceCollide().radius(d => radius(d) + 6).strength(1.0))
     .force('center', d3.forceCenter(width / 2, height / 2))
     .force('x', d3.forceX(width / 2).strength(0.05))
-    .force('y', d3.forceY(height / 2).strength(0.05));
+    .force('y', d3.forceY(height / 2).strength(0.05))
+    .force('boundary', boundaryForce);
 
+  let firstTickLogged = false;
   simulation.on('tick', () => {
     link
       .attr('x1', d => d.source.x)
       .attr('y1', d => d.source.y)
       .attr('x2', d => d.target.x)
       .attr('y2', d => d.target.y);
+    // Clamp final positions to stay inside the viewport
     node
-      .attr('transform', d => `translate(${d.x},${d.y})`);
+      .attr('transform', d => {
+        const r = radius(d);
+        d.x = Math.max(padding + r, Math.min(width - padding - r, d.x));
+        d.y = Math.max(padding + r, Math.min(height - padding - r, d.y));
+        return `translate(${d.x},${d.y})`;
+      });
+    if (!firstTickLogged) {
+      firstTickLogged = true;
+      console.log('[Nodeword] Force layout started ticking');
+    }
   });
 
   // Resize handling for responsiveness
   const onResize = () => {
     const w = container.clientWidth;
-    const h = Math.min(720, Math.max(480, Math.floor(window.innerHeight * 0.7)));
+    const h = Math.min(820, Math.max(520, Math.floor(window.innerHeight * 0.75)));
     svg.attr('width', w).attr('height', h);
     simulation.force('center', d3.forceCenter(w / 2, h / 2));
     simulation.alpha(0.3).restart();
@@ -314,6 +369,12 @@ function renderForceGraph(container, aliasGraph) {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  console.log('[Nodeword] DOMContentLoaded');
+  if (typeof d3 === 'undefined') {
+    console.error('[Nodeword] D3 not loaded. Force graph will not render.');
+  } else {
+    console.log('[Nodeword] D3 version', d3.version);
+  }
   const title = document.querySelector("h1");
   if (title) {
     title.animate(
@@ -329,18 +390,29 @@ document.addEventListener("DOMContentLoaded", () => {
 
   async function generateAndRender() {
     container.textContent = 'Generating…';
+    console.log('[Nodeword] Generating puzzle…');
     try {
       if (!wordData) wordData = await fetchWordData();
+      console.log('[Nodeword] Generating graph with constraints…');
       const graph = generatePuzzleGraph(wordData, 12, 4, 6000);
+      console.log('[Nodeword] Graph generated:', {
+        words: graph.words.length,
+        categories: graph.categories.length,
+        edges: graph.edges.length
+      });
       const aliasGraph = toAliasGraph(graph);
       renderForceGraph(container, aliasGraph);
+      console.log('[Nodeword] Graph rendered to SVG');
     } catch (err) {
       container.textContent = 'Failed to generate puzzle.';
       console.error(err);
     }
   }
 
-  nextBtn?.addEventListener('click', generateAndRender);
+  nextBtn?.addEventListener('click', () => {
+    console.log('[Nodeword] Next puzzle clicked');
+    generateAndRender();
+  });
   generateAndRender();
 });
 

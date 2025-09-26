@@ -90,7 +90,8 @@ a:hover {
 
 #puzzle {
   margin: 28px auto 0;
-  max-width: 880px;
+  max-width: none;
+  width: calc(100% - 16px);
   padding: 16px 20px;
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -100,7 +101,7 @@ a:hover {
 
 .graph-svg {
   width: 100%;
-  height: min(70vh, 720px);
+  height: min(75vh, 820px);
   display: block;
 }
 
