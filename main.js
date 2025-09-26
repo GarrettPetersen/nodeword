@@ -253,7 +253,16 @@ function generatePuzzleGraph(wordToCategories, targetWordCount = 12, maxDegree =
         const [w, c] = key.split('||');
         edgesList.push({ word: w, category: c });
       }
-      return { words, categories, edges: edgesList };
+
+      // Post-step: prune orphan categories (degree 1) after placing last word
+      const catCounts = new Map();
+      for (const e of edgesList) {
+        catCounts.set(e.category, (catCounts.get(e.category) || 0) + 1);
+      }
+      const prunedEdges = edgesList.filter(e => (catCounts.get(e.category) || 0) > 1);
+      const prunedCategories = Array.from(new Set(prunedEdges.map(e => e.category)));
+      // Keep the same words list; they should still have other connections due to earlier constraints
+      return { words, categories: prunedCategories, edges: prunedEdges };
     }
   }
 
@@ -698,8 +707,12 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     .force('y', d3.forceY(height / 2).strength(0.16))
     .force('boundary', boundaryForce);
 
-  // Nuclear option: scale scene down if content cannot fit with padding
+  // Nuclear option: iterative auto-fit scaling
   let lastScale = 1;
+  const scaleFloor = 0.55;
+  const scaleCeil = 1.05;
+  const scaleStep = 0.03; // adjust per tick
+  const scaleEps = 0.01; // hysteresis to avoid jitter
   function fitSceneIfNeeded() {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const n of nodes) {
@@ -718,13 +731,18 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     const contentH = Math.max(1, maxY - minY);
     const sx = (width - 2 * basePadding) / contentW;
     const sy = (height - 2 * basePadding) / contentH;
-    const s = Math.min(sx, sy, 1);
-    if (s < 1 || lastScale !== 1) {
+    const target = Math.min(sx, sy);
+    let next = lastScale;
+    if (target < lastScale - scaleEps) {
+      next = Math.max(scaleFloor, lastScale - scaleStep);
+    } else if (target > lastScale + scaleEps) {
+      next = Math.min(scaleCeil, lastScale + scaleStep);
+    }
+    if (Math.abs(next - lastScale) > 1e-3 || lastScale !== 1) {
       const cx = (minX + maxX) / 2;
       const cy = (minY + maxY) / 2;
-      scene.transition().duration(250).ease(d3.easeCubicOut)
-        .attr('transform', `translate(${width / 2},${height / 2}) scale(${s}) translate(${-cx},${-cy})`);
-      lastScale = s;
+      scene.attr('transform', `translate(${width / 2},${height / 2}) scale(${next}) translate(${-cx},${-cy})`);
+      lastScale = next;
     }
   }
 
