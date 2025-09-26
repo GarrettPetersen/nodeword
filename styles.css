@@ -110,6 +110,11 @@ a:hover {
   stroke-width: 1.5;
 }
 
+.link.highlight {
+  stroke: var(--brand-2);
+  stroke-width: 2.2;
+}
+
 .node circle {
   stroke: rgba(255,255,255,0.9);
   stroke-width: 1px;
@@ -121,6 +126,23 @@ a:hover {
 
 .node.category circle {
   fill: rgba(124,77,255,0.7);
+}
+
+.node.category rect {
+  fill: #9aa3b0;
+  stroke: rgba(255,255,255,0.5);
+  stroke-width: 1px;
+}
+
+.node.category.highlight rect {
+  fill: var(--brand);
+  stroke: var(--brand-2);
+  stroke-width: 2px;
+}
+
+.node.category .cat-emoji {
+  font-size: 16px;
+  pointer-events: none;
 }
 
 .node text {

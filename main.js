@@ -274,6 +274,19 @@ async function fetchWordData() {
   return data;
 }
 
+async function fetchCategoryEmojis() {
+  try {
+    let res = await fetch('/data/category_emojis.json');
+    if (!res.ok) res = await fetch('data/category_emojis.json');
+    if (!res.ok) throw new Error('Failed to load category_emojis.json');
+    const data = await res.json();
+    return data;
+  } catch (e) {
+    console.warn('[Nodeword] category_emojis.json not loaded:', e.message);
+    return {};
+  }
+}
+
 const NODEWORD_CONFIG = {
   targetWords: 12,
   maxDegree: 4,
@@ -356,7 +369,7 @@ function measureWordCircle(word) {
   return { radius: r, fontSize: font, parts: [text], startY };
 }
 
-function renderForceGraph(container, aliasGraph) {
+function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmojis) {
   container.innerHTML = '';
   const svg = d3.select(container).append('svg').attr('class', 'graph-svg');
   const width = container.clientWidth;
@@ -402,11 +415,32 @@ function renderForceGraph(container, aliasGraph) {
 
   const radius = d => d.type === 'category' ? 16 : 12;
 
-  node.append('circle')
+  // Draw shapes: word nodes as circles, category nodes as diamonds (rotated squares)
+  node.filter(d => d.type === 'word')
+    .append('circle')
     .attr('r', radius);
 
-  node.append('text')
+  const catNodes = node.filter(d => d.type === 'category');
+  catNodes
+    .append('rect')
+    .attr('x', -12)
+    .attr('y', -12)
+    .attr('width', 24)
+    .attr('height', 24)
+    .attr('transform', 'rotate(45)');
+
+  // Optional alias labels only for words
+  node.filter(d => d.type === 'word')
+    .append('text')
     .text(d => d.alias);
+
+  // Emoji overlay for categories
+  const catEmoji = catNodes
+    .append('text')
+    .attr('class', 'cat-emoji')
+    .attr('text-anchor', 'middle')
+    .attr('dominant-baseline', 'central')
+    .text('');
 
   // Build word-circle overlay assignments: shuffle words and assign to word-nodes
   const wordNodes = nodes.filter(n => n.type === 'word');
@@ -466,6 +500,55 @@ function renderForceGraph(container, aliasGraph) {
   const wordCircleByAlias = new Map();
   wordCircleG.each(function(d) { wordCircleByAlias.set(d.alias, d3.select(this)); });
 
+  // Build helper maps for highlighting
+  const categoryNodeByAlias = new Map();
+  catNodes.each(function(d){ categoryNodeByAlias.set(d.alias, d3.select(this)); });
+  const linksByCategory = new Map();
+  link.each(function(l){
+    const cat = typeof l.target === 'string' ? l.target : l.target.alias;
+    const arr = linksByCategory.get(cat) || [];
+    arr.push(d3.select(this));
+    linksByCategory.set(cat, arr);
+  });
+
+  function computeCommonCategoryForCategoryAlias(catAlias) {
+    // Find words (actual strings) assigned to word nodes connected to this category
+    const connectedWordAliases = links
+      .filter(l => (typeof l.target === 'string' ? l.target : l.target.alias) === catAlias)
+      .map(l => (typeof l.source === 'string' ? l.source : l.source.alias));
+    if (connectedWordAliases.length === 0) return null;
+    let intersection = null;
+    for (const wa of connectedWordAliases) {
+      const word = nodeAliasToWord.get(wa);
+      const cats = new Set(wordToCategories[word] || []);
+      if (!intersection) {
+        intersection = cats;
+      } else {
+        const next = new Set();
+        for (const c of intersection) if (cats.has(c)) next.add(c);
+        intersection = next;
+      }
+      if (!intersection || intersection.size === 0) return null;
+    }
+    // Return any one of the common categories
+    return intersection.values().next().value || null;
+  }
+
+  function updateCategoryHighlights() {
+    for (const [catAlias, catSel] of categoryNodeByAlias.entries()) {
+      const common = computeCommonCategoryForCategoryAlias(catAlias);
+      const highlight = Boolean(common);
+      catSel.classed('highlight', highlight);
+      const emojiChar = categoryEmojis[catSel.datum().id] || '';
+      // Update emoji text
+      const textSel = catSel.select('text.cat-emoji');
+      textSel.text(highlight ? emojiChar : '');
+      // Update connected edges
+      const lines = linksByCategory.get(catAlias) || [];
+      for (const ln of lines) ln.classed('highlight', highlight);
+    }
+  }
+
   wordCircleG.on('click', function(event, d) {
     event.stopPropagation();
     const me = d3.select(this);
@@ -515,10 +598,13 @@ function renderForceGraph(container, aliasGraph) {
 
     // Visual: selected state cleared, and ensure both circles fly to their node positions on next tick
     deselect();
+    updateCategoryHighlights();
   });
 
   // Click anywhere else to clear selection
   svg.on('click', () => deselect());
+  // Initial check
+  updateCategoryHighlights();
 
   const padding = 24; // keep a small buffer to edges
 
@@ -618,7 +704,8 @@ document.addEventListener("DOMContentLoaded", () => {
         edges: graph.edges.length
       });
       const aliasGraph = toAliasGraph(graph);
-      renderForceGraph(container, aliasGraph);
+      const catEmojis = await fetchCategoryEmojis();
+      renderForceGraph(container, aliasGraph, wordData, catEmojis);
       console.log('[Nodeword] Graph rendered to SVG');
     } catch (err) {
       container.textContent = 'Failed to generate puzzle.';
