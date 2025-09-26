@@ -53,48 +53,108 @@ function parseArgs(argv) {
 }
 
 function pruneArrayModel(entries, dropEmpty) {
+  // Normalize and apply explicit/prefix removals first
+  const items = [];
+  for (const entry of entries) {
+    if (entry && Array.isArray(entry.categories)) {
+      const originalLen = entry.categories.length;
+      const filtered = entry.categories.filter((c) => !shouldRemoveCategory(c));
+      items.push({ entry, categories: filtered, originalLen });
+    } else {
+      items.push({ entry, categories: undefined, originalLen: 0 });
+    }
+  }
+
+  function recomputeCounts(arr) {
+    const counts = new Map();
+    for (const it of arr) {
+      if (!Array.isArray(it.categories)) continue;
+      for (const c of it.categories) counts.set(c, (counts.get(c) || 0) + 1);
+    }
+    return counts;
+  }
+
+  // Iteratively remove categories that appear only once across all entries
+  while (true) {
+    const counts = recomputeCounts(items);
+    const singles = new Set(Array.from(counts.entries()).filter(([, n]) => n === 1).map(([c]) => c));
+    if (singles.size === 0) break;
+    for (const it of items) {
+      if (!Array.isArray(it.categories)) continue;
+      it.categories = it.categories.filter((c) => !singles.has(c));
+    }
+  }
+
+  // Build final list and compute stats
   let removedCount = 0;
   let changedWords = 0;
   const result = [];
-
-  for (const entry of entries) {
-    if (entry && Array.isArray(entry.categories)) {
-      const before = entry.categories.length;
-      const filtered = entry.categories.filter((c) => !shouldRemoveCategory(c));
-      removedCount += before - filtered.length;
-      if (filtered.length !== before) changedWords++;
-
-      if (dropEmpty && filtered.length === 0) {
-        continue; // remove this entry entirely
-      }
-      result.push({ ...entry, categories: filtered });
-    } else {
-      // Not an expected shape; pass through untouched
-      result.push(entry);
+  for (const it of items) {
+    if (!Array.isArray(it.categories)) {
+      result.push(it.entry);
+      continue;
     }
+    const finalLen = it.categories.length;
+    removedCount += Math.max(0, it.originalLen - finalLen);
+    if (it.originalLen !== finalLen) changedWords++;
+    if (dropEmpty && finalLen === 0) {
+      continue;
+    }
+    result.push({ ...it.entry, categories: it.categories });
   }
 
   return { data: result, removedCount, changedWords };
 }
 
 function pruneObjectModel(map, dropEmpty) {
-  let removedCount = 0;
-  let changedWords = 0;
-  const out = {};
-
+  // Apply explicit/prefix-based removals first
+  const working = {};
+  const originalLens = {};
   for (const [word, categories] of Object.entries(map)) {
     if (Array.isArray(categories)) {
-      const before = categories.length;
-      const filtered = categories.filter((c) => !shouldRemoveCategory(c));
-      removedCount += before - filtered.length;
-      if (filtered.length !== before) changedWords++;
-      if (dropEmpty && filtered.length === 0) {
-        continue; // drop key entirely
-      }
-      out[word] = filtered;
+      originalLens[word] = categories.length;
+      working[word] = categories.filter((c) => !shouldRemoveCategory(c));
     } else {
-      out[word] = categories;
+      originalLens[word] = 0;
+      working[word] = categories;
     }
+  }
+
+  function recomputeCounts(obj) {
+    const counts = new Map();
+    for (const cats of Object.values(obj)) {
+      if (!Array.isArray(cats)) continue;
+      for (const c of cats) counts.set(c, (counts.get(c) || 0) + 1);
+    }
+    return counts;
+  }
+
+  // Iteratively remove categories that appear only once across all words
+  let current = working;
+  while (true) {
+    const counts = recomputeCounts(current);
+    const singles = new Set(Array.from(counts.entries()).filter(([, n]) => n === 1).map(([c]) => c));
+    if (singles.size === 0) break;
+    const next = {};
+    for (const [w, cats] of Object.entries(current)) {
+      if (!Array.isArray(cats)) { next[w] = cats; continue; }
+      const newCats = cats.filter((c) => !singles.has(c));
+      if (dropEmpty && newCats.length === 0) {
+        continue; // drop word entirely
+      }
+      next[w] = newCats;
+    }
+    current = next;
+  }
+
+  const out = current;
+  let removedCount = 0;
+  let changedWords = 0;
+  for (const [w, origLen] of Object.entries(originalLens)) {
+    const finalCats = out.hasOwnProperty(w) && Array.isArray(out[w]) ? out[w] : [];
+    const finalLen = finalCats.length;
+    removedCount += Math.max(0, origLen - finalLen);
+    if (origLen !== finalLen || !out.hasOwnProperty(w)) changedWords++;
   }
 
   return { data: out, removedCount, changedWords };
