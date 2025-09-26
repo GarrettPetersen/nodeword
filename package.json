@@ -6,6 +6,7 @@
     "dev": "npx wrangler pages dev --local .",
     "preview": "npx wrangler pages dev .",
     "build": "echo \"Static site - nothing to build\"",
+    "prune:categories": "node scripts/prune-categories.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
