@@ -15,6 +15,21 @@ const CATEGORIES_TO_REMOVE = new Set([
   "Flower-class Corvettes"
 ]);
 
+// Also remove categories that begin with these phrases
+const CATEGORY_PREFIX_PATTERNS = [
+  /^Starts with\b/,
+  /^Ends with\b/,
+];
+
+function shouldRemoveCategory(category) {
+  const name = String(category);
+  if (CATEGORIES_TO_REMOVE.has(name)) return true;
+  for (const re of CATEGORY_PREFIX_PATTERNS) {
+    if (re.test(name)) return true;
+  }
+  return false;
+}
+
 function parseArgs(argv) {
   const args = Object.create(null);
   for (let i = 2; i < argv.length; i++) {
@@ -45,7 +60,7 @@ function pruneArrayModel(entries, dropEmpty) {
   for (const entry of entries) {
     if (entry && Array.isArray(entry.categories)) {
       const before = entry.categories.length;
-      const filtered = entry.categories.filter((c) => !CATEGORIES_TO_REMOVE.has(String(c)));
+      const filtered = entry.categories.filter((c) => !shouldRemoveCategory(c));
       removedCount += before - filtered.length;
       if (filtered.length !== before) changedWords++;
 
@@ -70,7 +85,7 @@ function pruneObjectModel(map, dropEmpty) {
   for (const [word, categories] of Object.entries(map)) {
     if (Array.isArray(categories)) {
       const before = categories.length;
-      const filtered = categories.filter((c) => !CATEGORIES_TO_REMOVE.has(String(c)));
+      const filtered = categories.filter((c) => !shouldRemoveCategory(c));
       removedCount += before - filtered.length;
       if (filtered.length !== before) changedWords++;
       if (dropEmpty && filtered.length === 0) {
