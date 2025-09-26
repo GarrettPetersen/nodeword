@@ -132,6 +132,23 @@ a:hover {
   dominant-baseline: central;
 }
 
+.word-circles {
+  pointer-events: none;
+}
+
+.word-circle text {
+  fill: #0b0e1a;
+  font-weight: 700;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+
+.word-circle circle {
+  fill: #ffffff;
+  stroke: rgba(0,0,0,0.6);
+  stroke-width: 1px;
+}
+
 .graph {
   display: grid;
   grid-template-columns: 1fr 1fr;

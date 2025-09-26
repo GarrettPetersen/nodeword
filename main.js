@@ -304,6 +304,19 @@ function toAliasGraph(graph) {
   return { nodes, links };
 }
 
+function measureWordCircle(word) {
+  // Heuristic: base radius plus per-character growth, clamped
+  const base = 18;
+  const perChar = 1.2;
+  const maxR = 44;
+  const r = Math.min(maxR, base + Math.ceil(String(word).length * perChar));
+  // Font size scales with radius
+  const font = Math.max(10, Math.min(16, Math.floor(r * 0.5)));
+  // Attempt simple wrapping by splitting on spaces and balancing lines
+  const parts = String(word).split(/\s+/);
+  return { radius: r, fontSize: font, parts };
+}
+
 function renderForceGraph(container, aliasGraph) {
   container.innerHTML = '';
   const svg = d3.select(container).append('svg').attr('class', 'graph-svg');
@@ -356,23 +369,82 @@ function renderForceGraph(container, aliasGraph) {
   node.append('text')
     .text(d => d.alias);
 
+  // Build word-circle overlay assignments: shuffle words and assign to word-nodes
+  const wordNodes = nodes.filter(n => n.type === 'word');
+  const wordLabels = shuffle(aliasGraph.nodes.filter(n => n.type === 'word').map(n => n.id).slice());
+  const assignment = new Map(); // node.alias -> actual word string
+  for (let i = 0; i < wordNodes.length; i++) {
+    const nodeAlias = wordNodes[i].alias;
+    const assignedWord = wordLabels[i % wordLabels.length];
+    assignment.set(nodeAlias, assignedWord);
+  }
+
+  // Precompute circle metrics and per-node extra repulsion based on circle size
+  const circleMetrics = new Map(); // node.alias -> {radius,fontSize,parts}
+  for (const wn of wordNodes) {
+    const w = assignment.get(wn.alias);
+    const m = measureWordCircle(w);
+    circleMetrics.set(wn.alias, m);
+  }
+
+  const circlesLayer = svg.append('g').attr('class', 'word-circles');
+  const wordCircleG = circlesLayer.selectAll('g')
+    .data(wordNodes)
+    .enter()
+    .append('g')
+    .attr('class', 'word-circle');
+
+  wordCircleG.append('circle')
+    .attr('r', d => (circleMetrics.get(d.alias)?.radius || 24));
+
+  wordCircleG.each(function(d) {
+    const g = d3.select(this);
+    const w = assignment.get(d.alias);
+    const m = circleMetrics.get(d.alias);
+    const maxLineChars = Math.max(3, Math.floor(m.radius * 0.6 / 6));
+    const parts = [];
+    let line = '';
+    for (const token of m.parts) {
+      if ((line + ' ' + token).trim().length <= maxLineChars) {
+        line = (line ? line + ' ' : '') + token;
+      } else {
+        if (line) parts.push(line);
+        line = token;
+      }
+    }
+    if (line) parts.push(line);
+    const totalHeight = parts.length * (m.fontSize + 2) - 2;
+    const startY = -totalHeight / 2 + m.fontSize / 2;
+    for (let i = 0; i < parts.length; i++) {
+      g.append('text')
+        .attr('y', startY + i * (m.fontSize + 2))
+        .style('font-size', m.fontSize + 'px')
+        .text(parts[i]);
+    }
+  });
+
   const padding = 24; // keep a small buffer to edges
 
   function boundaryForce() {
     // Custom force to nudge nodes back within bounds
     for (const node of nodes) {
       const r = radius(node);
-      if (node.x < padding + r) node.vx += (padding + r - node.x) * 0.05;
-      if (node.x > width - padding - r) node.vx += (width - padding - r - node.x) * 0.05;
-      if (node.y < padding + r) node.vy += (padding + r - node.y) * 0.05;
-      if (node.y > height - padding - r) node.vy += (height - padding - r - node.y) * 0.05;
+      // Inflate boundary considering overlay circle size for word nodes
+      const extra = node.type === 'word' ? (circleMetrics.get(node.alias)?.radius || 0) : 0;
+      if (node.x < padding + r + extra) node.vx += (padding + r + extra - node.x) * 0.05;
+      if (node.x > width - padding - r - extra) node.vx += (width - padding - r - extra - node.x) * 0.05;
+      if (node.y < padding + r + extra) node.vy += (padding + r + extra - node.y) * 0.05;
+      if (node.y > height - padding - r - extra) node.vy += (height - padding - r - extra - node.y) * 0.05;
     }
   }
 
   const simulation = d3.forceSimulation(nodes)
     .force('link', d3.forceLink(links).id(d => d.alias).distance(60).strength(0.9))
-    .force('charge', d3.forceManyBody().strength(-240))
-    .force('collide', d3.forceCollide().radius(d => radius(d) + 6).strength(1.0))
+    .force('charge', d3.forceManyBody().strength(d => d.type === 'word' ? -240 - (circleMetrics.get(d.alias)?.radius || 0) * 2 : -240))
+    .force('collide', d3.forceCollide().radius(d => {
+      const extra = d.type === 'word' ? (circleMetrics.get(d.alias)?.radius || 0) : 0;
+      return radius(d) + 6 + extra;
+    }).strength(1.0))
     .force('center', d3.forceCenter(width / 2, height / 2))
     .force('x', d3.forceX(width / 2).strength(0.05))
     .force('y', d3.forceY(height / 2).strength(0.05))
@@ -389,10 +461,15 @@ function renderForceGraph(container, aliasGraph) {
     node
       .attr('transform', d => {
         const r = radius(d);
-        d.x = Math.max(padding + r, Math.min(width - padding - r, d.x));
-        d.y = Math.max(padding + r, Math.min(height - padding - r, d.y));
+        const extra = d.type === 'word' ? (circleMetrics.get(d.alias)?.radius || 0) : 0;
+        d.x = Math.max(padding + r + extra, Math.min(width - padding - r - extra, d.x));
+        d.y = Math.max(padding + r + extra, Math.min(height - padding - r - extra, d.y));
         return `translate(${d.x},${d.y})`;
       });
+
+    // Keep word circles centered atop their assigned word nodes
+    wordCircleG
+      .attr('transform', d => `translate(${d.x},${d.y})`);
     if (!firstTickLogged) {
       firstTickLogged = true;
       console.log('[Nodeword] Force layout started ticking');
