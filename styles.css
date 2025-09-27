@@ -9,10 +9,11 @@
   width: 100vw;
   height: 100vh;
   display: grid;
-  place-items: end center;
+  place-items: center center;
   padding: 12px;
   background: transparent;
   z-index: 999;
+  pointer-events: none;
 }
 .consent-card {
   width: min(92vw, 520px);
@@ -23,6 +24,7 @@
   color: var(--text);
   max-height: 60vh;
   overflow: auto;
+  pointer-events: auto;
 }
 .consent-actions { display: flex; gap: 8px; justify-content: flex-end; }
 .consent-actions button { min-width: 96px; }
