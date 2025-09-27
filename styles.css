@@ -15,15 +15,24 @@
   z-index: 999;
 }
 .consent-card {
-  max-width: 520px;
-  width: 100%;
+  width: min(92vw, 520px);
   background: rgba(15, 18, 32, 0.96);
   border: 1px solid rgba(255,255,255,0.12);
   border-radius: 12px;
   padding: 16px;
   color: var(--text);
+  max-height: 60vh;
+  overflow: auto;
 }
 .consent-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.consent-actions button { min-width: 96px; }
+
+@media (max-width: 420px) {
+  .consent { padding: 8px; padding-bottom: calc(8px + env(safe-area-inset-bottom)); }
+  .consent-card { padding: 12px; max-height: 70vh; }
+  .consent-actions { position: sticky; bottom: 0; background: rgba(15,18,32,0.98); border-top: 1px solid rgba(255,255,255,0.12); padding-top: 8px; }
+  .consent-actions button { flex: 1 1 auto; }
+}
 
 .modal { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; display: grid; place-items: center; background: rgba(0,0,0,0.35); z-index: 1000; }
 .modal-card { background: rgba(15, 18, 32, 0.98); border: 1px solid rgba(255,255,255,0.15); border-radius: 12px; padding: 16px 18px; min-width: 260px; color: var(--text); }
