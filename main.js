@@ -1109,7 +1109,9 @@ document.addEventListener("DOMContentLoaded", () => {
   function readState() {
     try { const raw = localStorage.getItem(STORAGE_KEY); return raw ? JSON.parse(raw) : null; } catch { return null; }
   }
+  function canPersist() { return appState && appState.consent === true; }
   function writeState(s) {
+    if (!canPersist()) return;
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); } catch {}
   }
   function todayStamp() {
@@ -1133,7 +1135,7 @@ document.addEventListener("DOMContentLoaded", () => {
   function showConsentIfNeeded() { if (consent) consent.hidden = !(appState.consent === null); }
   showConsentIfNeeded();
   acceptConsent?.addEventListener('click', () => { appState.consent = true; writeState(appState); showConsentIfNeeded(); });
-  declineConsent?.addEventListener('click', () => { appState.consent = false; writeState(appState); showConsentIfNeeded(); });
+  declineConsent?.addEventListener('click', () => { appState.consent = false; try { localStorage.removeItem(STORAGE_KEY); } catch {} showConsentIfNeeded(); });
   function openStats() { if (statsModal) statsModal.hidden = false; }
   function closeStatsModal() { if (statsModal) statsModal.hidden = true; }
   statsBtn?.addEventListener('click', openStats);
