@@ -487,6 +487,88 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     edges: links.length
   });
 
+  // Prelayout with a light Kamada-Kawai-style pass to reduce crossings
+  (function kkPrelayout() {
+    const N = nodes.length;
+    if (N === 0) return;
+    const aliasToIndex = new Map(nodes.map((n, i) => [n.alias, i]));
+    // Build adjacency for unweighted shortest paths
+    const adj = Array.from({ length: N }, () => []);
+    for (const e of links) {
+      const si = aliasToIndex.get(e.source);
+      const ti = aliasToIndex.get(e.target);
+      if (si == null || ti == null) continue;
+      adj[si].push(ti);
+      adj[ti].push(si);
+    }
+    // All-pairs shortest path distances via BFS
+    const INF = 1e9;
+    const dist = Array.from({ length: N }, () => Array(N).fill(INF));
+    for (let s = 0; s < N; s++) {
+      const q = [s];
+      dist[s][s] = 0;
+      for (let qi = 0; qi < q.length; qi++) {
+        const u = q[qi];
+        for (const v of adj[u]) if (dist[s][v] === INF) {
+          dist[s][v] = dist[s][u] + 1;
+          q.push(v);
+        }
+      }
+    }
+    // Determine desired lengths
+    let dmax = 0;
+    for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) if (dist[i][j] < INF) dmax = Math.max(dmax, dist[i][j]);
+    if (dmax === 0) dmax = 1;
+    const pad = Math.max(24, Math.round(Math.min(width, height) * 0.06));
+    const Lmin = 40, Lmax = Math.min(width, height) / 2 - pad;
+    const L = (i, j) => (dist[i][j] >= INF ? Lmax : (Lmin + (Lmax - Lmin) * (dist[i][j] / dmax)));
+    const K = (i, j) => (dist[i][j] <= 0 || dist[i][j] >= INF ? 0 : 1 / (dist[i][j] * dist[i][j]));
+    // Init positions on a circle
+    let x = new Array(N), y = new Array(N);
+    for (let i = 0; i < N; i++) {
+      const a = (2 * Math.PI * i) / N;
+      x[i] = width / 2 + (Math.cos(a) * (Math.min(width, height) * 0.3));
+      y[i] = height / 2 + (Math.sin(a) * (Math.min(width, height) * 0.3));
+    }
+    // Gradient descent on stress for a small number of iterations
+    const iters = 150;
+    const step = 0.0025;
+    for (let it = 0; it < iters; it++) {
+      const fx = new Array(N).fill(0);
+      const fy = new Array(N).fill(0);
+      for (let i = 0; i < N; i++) {
+        for (let j = i + 1; j < N; j++) {
+          const dx = x[i] - x[j];
+          const dy = y[i] - y[j];
+          const r = Math.hypot(dx, dy) || 1e-6;
+          const l = L(i, j);
+          const k = K(i, j);
+          if (k === 0) continue;
+          const f = k * (r - l) / r;
+          const fxij = f * dx;
+          const fyij = f * dy;
+          fx[i] -= fxij; fy[i] -= fyij;
+          fx[j] += fxij; fy[j] += fyij;
+        }
+      }
+      for (let i = 0; i < N; i++) {
+        x[i] -= step * fx[i];
+        y[i] -= step * fy[i];
+      }
+    }
+    // Normalize to padded viewport
+    let minX = Math.min(...x), maxX = Math.max(...x);
+    let minY = Math.min(...y), maxY = Math.max(...y);
+    let cw = Math.max(1, maxX - minX), ch = Math.max(1, maxY - minY);
+    const sx = (width - 2 * pad) / cw, sy = (height - 2 * pad) / ch;
+    const s = Math.min(sx, sy);
+    for (let i = 0; i < N; i++) {
+      const nx = (x[i] - minX - cw / 2) * s + width / 2;
+      const ny = (y[i] - minY - ch / 2) * s + height / 2;
+      nodes[i].x = nx; nodes[i].y = ny; nodes[i].vx = 0; nodes[i].vy = 0;
+    }
+  })();
+
   // Set of categories that exist in THIS puzzle (restrict emoji logic to these)
   const puzzleCategories = new Set(nodes.filter(n => n.type === 'category').map(n => n.id));
 
