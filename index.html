@@ -24,6 +24,7 @@
       <p class="tagline">Click two circles to swap them. Fill all diamonds to win.</p>
       <div class="actions">
         <button class="primary" id="nextBtn">Next puzzle</button>
+        <button class="primary" id="statsBtn" style="position: fixed; top: 12px; right: 12px; z-index: 10;">Stats</button>
       </div>
       <section id="puzzle" aria-live="polite"></section>
       <div id="status" aria-live="polite"></div>
@@ -33,6 +34,30 @@
         Also check out
         <a href="https://connecdoku.com" target="_blank" rel="noopener">Connecdoku</a>!
       </footer>
+
+      <div id="consent" class="consent" role="dialog" aria-live="polite" aria-modal="true" hidden>
+        <div class="consent-card">
+          <p>We use a cookie to remember your progress and stats.</p>
+          <div class="consent-actions">
+            <button class="primary" id="acceptConsent">Accept</button>
+            <button id="declineConsent">Decline</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="statsModal" class="modal" role="dialog" aria-modal="true" hidden>
+        <div class="modal-card">
+          <h3>Stats</h3>
+          <ul>
+            <li>Total solved: <span id="statTotal">0</span></li>
+            <li>Solved today: <span id="statToday">0</span></li>
+            <li>Best day: <span id="statBest">0</span></li>
+          </ul>
+          <div class="modal-actions">
+            <button class="primary" id="closeStats">Close</button>
+          </div>
+        </div>
+      </div>
     </main>
 
     <script src="/main.js" defer></script>

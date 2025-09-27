@@ -1,3 +1,33 @@
+.modal[hidden],
+.consent[hidden] {
+  display: none !important;
+}
+.consent {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 100vw;
+  height: 100vh;
+  display: grid;
+  place-items: end center;
+  padding: 12px;
+  background: transparent;
+  z-index: 999;
+}
+.consent-card {
+  max-width: 520px;
+  width: 100%;
+  background: rgba(15, 18, 32, 0.96);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 12px;
+  padding: 16px;
+  color: var(--text);
+}
+.consent-actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+.modal { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; display: grid; place-items: center; background: rgba(0,0,0,0.35); z-index: 1000; }
+.modal-card { background: rgba(15, 18, 32, 0.98); border: 1px solid rgba(255,255,255,0.15); border-radius: 12px; padding: 16px 18px; min-width: 260px; color: var(--text); }
+.modal-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
 :root {
   --bg: #0f1220;
   --bg-accent: #151933;
@@ -37,6 +67,12 @@ body {
 
 #app > * {
   max-width: 720px;
+}
+
+/* Overlays must not be constrained by #app child max-width */
+#app > .modal,
+#app > .consent {
+  max-width: none;
 }
 
 h1 {

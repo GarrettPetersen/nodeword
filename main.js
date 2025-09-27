@@ -470,7 +470,7 @@ function measureWordCircle(word) {
   return { radius: r, fontSize: font, parts: [text], startY };
 }
 
-function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmojis) {
+function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmojis, persist) {
   container.innerHTML = '';
   const svg = d3.select(container).append('svg').attr('class', 'graph-svg');
   let width = container.clientWidth;
@@ -487,8 +487,19 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     edges: links.length
   });
 
-  // Prelayout with a light Kamada-Kawai-style pass to reduce crossings
+  // Prelayout with Kamada-Kawai (more iterations, early stop, random restarts) to reduce crossings
   (function kkPrelayout() {
+    if (persist && persist.restore && persist.restore.nodePositions) {
+      const pos = persist.restore.nodePositions;
+      const map = new Map(Object.entries(pos));
+      for (const n of nodes) {
+        const p = map.get(n.alias);
+        if (p && typeof p.x === 'number' && typeof p.y === 'number') {
+          n.x = p.x; n.y = p.y; n.vx = 0; n.vy = 0;
+        }
+      }
+      return;
+    }
     const N = nodes.length;
     if (N === 0) return;
     const aliasToIndex = new Map(nodes.map((n, i) => [n.alias, i]));
@@ -523,19 +534,57 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     const Lmin = 40, Lmax = Math.min(width, height) / 2 - pad;
     const L = (i, j) => (dist[i][j] >= INF ? Lmax : (Lmin + (Lmax - Lmin) * (dist[i][j] / dmax)));
     const K = (i, j) => (dist[i][j] <= 0 || dist[i][j] >= INF ? 0 : 1 / (dist[i][j] * dist[i][j]));
-    // Init positions on a circle
-    let x = new Array(N), y = new Array(N);
-    for (let i = 0; i < N; i++) {
-      const a = (2 * Math.PI * i) / N;
-      x[i] = width / 2 + (Math.cos(a) * (Math.min(width, height) * 0.3));
-      y[i] = height / 2 + (Math.sin(a) * (Math.min(width, height) * 0.3));
-    }
-    // Gradient descent on stress for a small number of iterations
-    const iters = 150;
-    const step = 0.0025;
-    for (let it = 0; it < iters; it++) {
-      const fx = new Array(N).fill(0);
-      const fy = new Array(N).fill(0);
+    let bestStress = Infinity; let bestX = null, bestY = null;
+    const restarts = 3;
+    for (let rs = 0; rs < restarts; rs++) {
+      // Init positions randomly on a circle with a phase offset per restart
+      let x = new Array(N), y = new Array(N);
+      const phase = Math.random() * 2 * Math.PI;
+      const radius0 = Math.min(width, height) * 0.3;
+      for (let i = 0; i < N; i++) {
+        const a = phase + (2 * Math.PI * i) / N;
+        x[i] = width / 2 + Math.cos(a) * radius0;
+        y[i] = height / 2 + Math.sin(a) * radius0;
+      }
+      // Gradient descent on stress
+      const iters = 800;
+      const step = 0.0015;
+      let calmIters = 0;
+      for (let it = 0; it < iters; it++) {
+        const fx = new Array(N).fill(0);
+        const fy = new Array(N).fill(0);
+        for (let i = 0; i < N; i++) {
+          for (let j = i + 1; j < N; j++) {
+            const dx = x[i] - x[j];
+            const dy = y[i] - y[j];
+            const r = Math.hypot(dx, dy) || 1e-6;
+            const l = L(i, j);
+            const k = K(i, j);
+            if (k === 0) continue;
+            const f = k * (r - l) / r;
+            const fxij = f * dx;
+            const fyij = f * dy;
+            fx[i] -= fxij; fy[i] -= fyij;
+            fx[j] += fxij; fy[j] += fyij;
+          }
+        }
+        let maxDelta = 0;
+        for (let i = 0; i < N; i++) {
+          const dx = step * fx[i];
+          const dy = step * fy[i];
+          x[i] -= dx; y[i] -= dy;
+          const md = Math.max(Math.abs(dx), Math.abs(dy));
+          if (md > maxDelta) maxDelta = md;
+        }
+        if (maxDelta < 0.15) {
+          calmIters++;
+          if (calmIters > 12) break;
+        } else {
+          calmIters = 0;
+        }
+      }
+      // Compute stress
+      let stress = 0;
       for (let i = 0; i < N; i++) {
         for (let j = i + 1; j < N; j++) {
           const dx = x[i] - x[j];
@@ -544,18 +593,12 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
           const l = L(i, j);
           const k = K(i, j);
           if (k === 0) continue;
-          const f = k * (r - l) / r;
-          const fxij = f * dx;
-          const fyij = f * dy;
-          fx[i] -= fxij; fy[i] -= fyij;
-          fx[j] += fxij; fy[j] += fyij;
+          const d = r - l; stress += k * d * d;
         }
       }
-      for (let i = 0; i < N; i++) {
-        x[i] -= step * fx[i];
-        y[i] -= step * fy[i];
-      }
+      if (stress < bestStress) { bestStress = stress; bestX = x; bestY = y; }
     }
+    const x = bestX, y = bestY;
     // Normalize to padded viewport
     let minX = Math.min(...x), maxX = Math.max(...x);
     let minY = Math.min(...y), maxY = Math.max(...y);
@@ -677,22 +720,27 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     return solved;
   }
 
-  let bestAssignment = null;
-  let bestSolved = Infinity;
-  for (let attempt = 0; attempt < 10; attempt++) {
-    const labels = shuffle(wordLabelsBase.slice());
-    const assign = new Map();
-    for (let i = 0; i < wordNodes.length; i++) {
-      assign.set(wordNodes[i].alias, labels[i % labels.length]);
+  let assignment;
+  if (persist && persist.restore && persist.restore.assignment) {
+    assignment = new Map(Object.entries(persist.restore.assignment));
+  } else {
+    let bestAssignment = null;
+    let bestSolved = Infinity;
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const labels = shuffle(wordLabelsBase.slice());
+      const assign = new Map();
+      for (let i = 0; i < wordNodes.length; i++) {
+        assign.set(wordNodes[i].alias, labels[i % labels.length]);
+      }
+      const solvedCount = countSolvedForAssignment(assign);
+      if (solvedCount < bestSolved) {
+        bestSolved = solvedCount;
+        bestAssignment = assign;
+        if (bestSolved === 0) break;
+      }
     }
-    const solvedCount = countSolvedForAssignment(assign);
-    if (solvedCount < bestSolved) {
-      bestSolved = solvedCount;
-      bestAssignment = assign;
-      if (bestSolved === 0) break;
-    }
+    assignment = bestAssignment || new Map();
   }
-  const assignment = bestAssignment || new Map();
 
   // Precompute circle metrics and per-node extra repulsion based on circle size
   const circleMetrics = new Map(); // node.alias -> {radius,fontSize,parts}
@@ -726,7 +774,7 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
 
   // Click handling for swapping circles between nodes
   let selected = null; // d (node datum) for selected word-circle
-  let solved = false;
+  let solved = Boolean(persist && persist.restore && persist.restore.solved);
 
   function deselect() {
     selected = null;
@@ -742,6 +790,11 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
   const nodeAliasToWord = new Map(assignment);
   const wordCircleByAlias = new Map();
   wordCircleG.each(function(d) { wordCircleByAlias.set(d.alias, d3.select(this)); });
+  // Persist initial assignment
+  if (persist && typeof persist.save === 'function') {
+    const asn0 = {}; nodeAliasToWord.forEach((v,k)=>asn0[k]=v);
+    persist.save({ assignment: asn0, solved });
+  }
 
   // Build helper maps for highlighting
   const categoryNodeByAlias = new Map();
@@ -892,8 +945,6 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
       return radius(d) + 10 + extra;
     }).strength(0.9))
     .force('center', d3.forceCenter(width / 2, height / 2))
-    .force('x', d3.forceX(width / 2).strength(0.06))
-    .force('y', d3.forceY(height / 2).strength(0.06))
     .force('boundary', boundaryForce);
 
   // Nuclear option: iterative auto-fit scaling
@@ -970,11 +1021,8 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     height = Math.min(820, Math.max(520, Math.floor(window.innerHeight * 0.75)));
     basePadding = computePadding();
     svg.attr('width', width).attr('height', height);
-    // Update forces that depend on width/height
-    simulation
-      .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('x', d3.forceX(width / 2).strength(0.16))
-      .force('y', d3.forceY(height / 2).strength(0.16));
+    // Update center force to new viewport
+    simulation.force('center', d3.forceCenter(width / 2, height / 2));
     // Immediately translate nodes toward the new center so they don't sit offscreen
     const dx = (width - prevW) / 2;
     const dy = (height - prevH) / 2;
@@ -1010,6 +1058,19 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
         if (btn) btn.style.visibility = 'visible';
         // Reveal labels and ensure emoji/text reflects the chosen intersection category
         updateCategoryHighlights();
+        // Increment stats immediately upon solve
+        try {
+          const raw = localStorage.getItem('nodeword_state_v1');
+          const s = raw ? JSON.parse(raw) : {};
+          const today = (()=>{const d=new Date();return `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`;})();
+          if (s.lastDay !== today) { s.today = 0; s.lastDay = today; }
+          s.total = (s.total||0)+1; s.today=(s.today||0)+1; s.best = Math.max(s.best||0, s.today||0);
+          s.puzzle = {...(s.puzzle||{}), solved:true};
+          localStorage.setItem('nodeword_state_v1', JSON.stringify(s));
+          const statTotal = document.getElementById('statTotal'); if (statTotal) statTotal.textContent = String(s.total||0);
+          const statToday = document.getElementById('statToday'); if (statToday) statToday.textContent = String(s.today||0);
+          const statBest = document.getElementById('statBest'); if (statBest) statBest.textContent = String(s.best||0);
+        } catch {}
       }
     } else {
       console.log('[Nodeword] NOT SOLVED: remaining diamonds', unsolvedCount);
@@ -1034,8 +1095,56 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const container = document.getElementById('puzzle');
   const nextBtn = document.getElementById('nextBtn');
-  // Progressive puzzle size: start at 5, increase to max 12 after each solve
-  let currentTargetWords = 5;
+  const statsBtn = document.getElementById('statsBtn');
+  const statsModal = document.getElementById('statsModal');
+  const closeStats = document.getElementById('closeStats');
+  const statTotal = document.getElementById('statTotal');
+  const statToday = document.getElementById('statToday');
+  const statBest = document.getElementById('statBest');
+  const consent = document.getElementById('consent');
+  const acceptConsent = document.getElementById('acceptConsent');
+  const declineConsent = document.getElementById('declineConsent');
+  // Persistence helpers and stats
+  const STORAGE_KEY = 'nodeword_state_v1';
+  function readState() {
+    try { const raw = localStorage.getItem(STORAGE_KEY); return raw ? JSON.parse(raw) : null; } catch { return null; }
+  }
+  function writeState(s) {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); } catch {}
+  }
+  function todayStamp() {
+    const d = new Date();
+    return `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`;
+  }
+  function initState() {
+    const today = todayStamp();
+    const s = readState();
+    if (!s) return { consent: null, total: 0, today: 0, best: 0, lastDay: today, target: 5, puzzle: null };
+    if (s.lastDay !== today) { s.today = 0; s.lastDay = today; s.target = 5; s.puzzle = null; }
+    return s;
+  }
+  let appState = initState();
+  function updateStatsUI() {
+    if (statTotal) statTotal.textContent = String(appState.total || 0);
+    if (statToday) statToday.textContent = String(appState.today || 0);
+    if (statBest) statBest.textContent = String(appState.best || 0);
+  }
+  updateStatsUI();
+  function showConsentIfNeeded() { if (consent) consent.hidden = !(appState.consent === null); }
+  showConsentIfNeeded();
+  acceptConsent?.addEventListener('click', () => { appState.consent = true; writeState(appState); showConsentIfNeeded(); });
+  declineConsent?.addEventListener('click', () => { appState.consent = false; writeState(appState); showConsentIfNeeded(); });
+  function openStats() { if (statsModal) statsModal.hidden = false; }
+  function closeStatsModal() { if (statsModal) statsModal.hidden = true; }
+  statsBtn?.addEventListener('click', openStats);
+  closeStats?.addEventListener('click', closeStatsModal);
+  // Close stats when clicking backdrop
+  statsModal?.addEventListener('click', (e) => { if (e.target === statsModal) closeStatsModal(); });
+  // Ensure stats modal starts hidden
+  if (statsModal) statsModal.hidden = true;
+
+  // Progressive puzzle size: start at 5, increase to max 12 after each solve (persisted)
+  let currentTargetWords = appState.target || 5;
   const maxTargetWords = 12;
 
   let wordData = null;
@@ -1060,7 +1169,25 @@ document.addEventListener("DOMContentLoaded", () => {
       });
       const aliasGraph = toAliasGraph(graph);
       const catEmojis = await fetchCategoryEmojis();
-      renderForceGraph(container, aliasGraph, wordData, catEmojis);
+      // Provide persistence adapter
+      const persist = {
+        restore: appState.puzzle && appState.puzzle.target === target ? {
+          nodePositions: appState.puzzle.nodePositions || null,
+          assignment: appState.puzzle.assignment || null,
+          solved: appState.puzzle.solved || false,
+        } : null,
+        save(payload) {
+          appState.puzzle = {
+            startedAt: appState.puzzle?.startedAt || Date.now(),
+            target,
+            graph,
+            ...payload,
+          };
+          appState.target = target;
+          writeState(appState);
+        }
+      };
+      renderForceGraph(container, aliasGraph, wordData, catEmojis, persist);
       console.log('[Nodeword] Graph rendered to SVG');
     } catch (err) {
       container.textContent = 'Failed to generate puzzle.';
@@ -1070,8 +1197,17 @@ document.addEventListener("DOMContentLoaded", () => {
 
   nextBtn?.addEventListener('click', () => {
     console.log('[Nodeword] Next puzzle clicked');
-    // Increase target words up to max, then re-generate
-    currentTargetWords = Math.min(currentTargetWords + 1, maxTargetWords);
+    // Stats increment on solve, and increase target words up to max, then re-generate
+    appState.total = (appState.total || 0) + 1;
+    appState.today = (appState.today || 0) + 1;
+    appState.best = Math.max(appState.best || 0, appState.today || 0);
+    writeState(appState);
+    updateStatsUI();
+    currentTargetWords = Math.min((appState.target || currentTargetWords) + 1, maxTargetWords);
+    appState.target = currentTargetWords;
+    // Clear current puzzle restore state for next puzzle
+    appState.puzzle = null;
+    writeState(appState);
     generateAndRender();
   });
   if (nextBtn) nextBtn.style.visibility = 'hidden';
