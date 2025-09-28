@@ -608,7 +608,7 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     let minY = Math.min(...y), maxY = Math.max(...y);
     let cw = Math.max(1, maxX - minX), ch = Math.max(1, maxY - minY);
     // Target lengths range
-    const Lmin = 80, Lmax = Math.min(width, height) * 0.45;
+    const Lmin2 = 80, Lmax2 = Math.min(width, height) * 0.45;
     const sx = (width - 2 * pad) / cw, sy = (height - 2 * pad) / ch;
     const s = Math.min(sx, sy);
     for (let i = 0; i < N; i++) {
