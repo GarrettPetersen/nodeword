@@ -721,8 +721,16 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
   }
 
   let assignment;
+  const restoredSolved = Boolean(persist && persist.restore && persist.restore.solved);
   if (persist && persist.restore && persist.restore.assignment) {
     assignment = new Map(Object.entries(persist.restore.assignment));
+  } else if (restoredSolved) {
+    // Fallback: canonical assignment if solved but no assignment stored
+    assignment = new Map();
+    const wordAliasesInOrder = nodes.filter(n=>n.type==='word').map(n=>n.alias);
+    for (let i = 0; i < wordAliasesInOrder.length; i++) {
+      assignment.set(wordAliasesInOrder[i], aliasGraph.nodes.filter(n=>n.type==='word')[i].id);
+    }
   } else {
     let bestAssignment = null;
     let bestSolved = Infinity;
@@ -774,7 +782,7 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
 
   // Click handling for swapping circles between nodes
   let selected = null; // d (node datum) for selected word-circle
-  let solved = Boolean(persist && persist.restore && persist.restore.solved);
+  let solved = restoredSolved;
 
   function deselect() {
     selected = null;
@@ -915,7 +923,15 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
   svg.on('click', () => { if (!solved) deselect(); });
   // Initial check
   updateCategoryHighlights();
-  checkForSolved();
+  if (solved) {
+    setInteractivity(false);
+    const statusEl = document.getElementById('status');
+    if (statusEl) statusEl.textContent = 'Puzzle solved!';
+    const btn = document.getElementById('nextBtn');
+    if (btn) btn.style.visibility = 'visible';
+  } else {
+    checkForSolved();
+  }
 
   const computePadding = () => Math.max(24, Math.round(Math.min(width, height) * 0.06));
   let basePadding = computePadding();
