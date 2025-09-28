@@ -1182,8 +1182,50 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         return true;
       }
-      const savedValid = validateSavedPuzzle(appState.puzzle) && appState.puzzle.target === target;
-      let graph = savedValid ? appState.puzzle.graph : generatePuzzleGraph(wordData, target, cfg.maxDegree, cfg.maxAttempts);
+      function isSolvableByCanonical(g) {
+        try {
+          const alias = toAliasGraph(g);
+          const puzzleCategories = new Set(alias.nodes.filter(n=>n.type==='category').map(n=>n.id));
+          const catToWordAliases = new Map();
+          for (const l of alias.links) {
+            const ca = l.target; const wa = l.source;
+            const arr = catToWordAliases.get(ca) || []; arr.push(wa); catToWordAliases.set(ca, arr);
+          }
+          const wordAliasToWord = new Map();
+          alias.nodes.filter(n=>n.type==='word').forEach((n, i)=>{ wordAliasToWord.set(n.alias, g.words[i]); });
+          for (const [catAlias, wordAliases] of catToWordAliases.entries()) {
+            if (!wordAliases || wordAliases.length === 0) return false;
+            let intersection = null;
+            for (const wa of wordAliases) {
+              const w = wordAliasToWord.get(wa);
+              const cats = new Set(wordData[w] || []);
+              if (!intersection) { intersection = cats; } else {
+                const next = new Set();
+                for (const c of intersection) if (cats.has(c)) next.add(c);
+                intersection = next;
+              }
+              if (!intersection || intersection.size === 0) return false;
+            }
+            let ok = false; for (const c of intersection) { if (puzzleCategories.has(c)) { ok = true; break; } }
+            if (!ok) return false;
+          }
+          return true;
+        } catch { return false; }
+      }
+
+      const savedValid = validateSavedPuzzle(appState.puzzle) && appState.puzzle.target === target && isSolvableByCanonical(appState.puzzle.graph);
+      let graph;
+      if (savedValid) {
+        graph = appState.puzzle.graph;
+      } else {
+        let attempts = 0;
+        do {
+          if (attempts === 0) console.log('[Nodeword] Generating graph with constraints…', { ...cfg, targetWords: target });
+          graph = generatePuzzleGraph(wordData, target, cfg.maxDegree, cfg.maxAttempts);
+          attempts++;
+        } while (!isSolvableByCanonical(graph) && attempts < 6);
+        if (appState.puzzle) { appState.puzzle = null; writeState(appState); }
+      }
       console.log('[Nodeword] Graph generated:', {
         words: graph.words.length,
         categories: graph.categories.length,
