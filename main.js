@@ -537,19 +537,20 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     const K = (i, j) => (dist[i][j] <= 0 || dist[i][j] >= INF ? 0 : 1 / (dist[i][j] * dist[i][j]));
     let bestStress = Infinity; let bestX = null, bestY = null;
     const restarts = 3;
+    const kScale = 1e-4; // scale spring constants to stabilize
     for (let rs = 0; rs < restarts; rs++) {
       // Init positions randomly on a circle with a phase offset per restart
       let x = new Array(N), y = new Array(N);
       const phase = Math.random() * 2 * Math.PI;
-      const radius0 = Math.min(width, height) * 0.3;
+      const radius0 = Math.min(width, height) * 0.25;
       for (let i = 0; i < N; i++) {
         const a = phase + (2 * Math.PI * i) / N;
         x[i] = width / 2 + Math.cos(a) * radius0;
         y[i] = height / 2 + Math.sin(a) * radius0;
       }
       // Gradient descent on stress
-      const iters = 800;
-      const step = 0.0015;
+      const iters = 1200;
+      const step0 = 0.0015;
       let calmIters = 0;
       for (let it = 0; it < iters; it++) {
         const fx = new Array(N).fill(0);
@@ -560,7 +561,7 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
             const dy = y[i] - y[j];
             const r = Math.hypot(dx, dy) || 1e-6;
             const l = L(i, j);
-            const k = K(i, j);
+            const k = K(i, j) * kScale;
             if (k === 0) continue;
             const f = k * (r - l) / r;
             const fxij = f * dx;
@@ -570,6 +571,7 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
           }
         }
         let maxDelta = 0;
+        const step = Math.max(0.0003, step0 * (1 - it / iters));
         for (let i = 0; i < N; i++) {
           const dx = step * fx[i];
           const dy = step * fy[i];
@@ -605,6 +607,8 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     let minX = Math.min(...x), maxX = Math.max(...x);
     let minY = Math.min(...y), maxY = Math.max(...y);
     let cw = Math.max(1, maxX - minX), ch = Math.max(1, maxY - minY);
+    // Target lengths range
+    const Lmin = 80, Lmax = Math.min(width, height) * 0.45;
     const sx = (width - 2 * pad) / cw, sy = (height - 2 * pad) / ch;
     const s = Math.min(sx, sy);
     for (let i = 0; i < N; i++) {
