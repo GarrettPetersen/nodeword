@@ -103,6 +103,12 @@ h1 {
   font-size: clamp(16px, 2.4vw, 20px);
 }
 
+.level {
+  margin: 0 0 12px;
+  color: var(--text);
+  font-weight: 700;
+}
+
 .actions {
   display: flex;
   justify-content: center;

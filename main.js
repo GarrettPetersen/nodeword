@@ -1131,6 +1131,8 @@ document.addEventListener("DOMContentLoaded", () => {
     if (statTotal) statTotal.textContent = String(appState.total || 0);
     if (statToday) statToday.textContent = String(appState.today || 0);
     if (statBest) statBest.textContent = String(appState.best || 0);
+    const lvlEl = document.getElementById('levelIndicator');
+    if (lvlEl) lvlEl.textContent = `Level ${Math.max(1, (appState.today || 0) + 1)}`;
   }
   updateStatsUI();
   function showConsentIfNeeded() { if (consent) consent.hidden = !(appState.consent === null); }
