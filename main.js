@@ -812,9 +812,11 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
   if (restoredSolved) {
     // Force canonical assignment on solved restore to present a clean solved state
     assignment = new Map();
-    for (let i = 0; i < graph.words.length; i++) {
-      const alias = `W${i + 1}`;
-      assignment.set(alias, graph.words[i]);
+    const orderedWordNodes = aliasGraph.nodes
+      .filter(n => n.type === 'word')
+      .sort((a, b) => (parseInt(String(a.alias).slice(1)) || 0) - (parseInt(String(b.alias).slice(1)) || 0));
+    for (const wn of orderedWordNodes) {
+      assignment.set(wn.alias, wn.id);
     }
   } else if (persist && persist.restore && persist.restore.assignment) {
     assignment = new Map(Object.entries(persist.restore.assignment));
