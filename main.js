@@ -536,8 +536,8 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     const L = (i, j) => (dist[i][j] >= INF ? Lmax : (Lmin + (Lmax - Lmin) * (dist[i][j] / dmax)));
     const K = (i, j) => (dist[i][j] <= 0 || dist[i][j] >= INF ? 0 : 1 / (dist[i][j] * dist[i][j]));
     let bestStress = Infinity; let bestX = null, bestY = null;
-    const restarts = 5;
-    const kScale = 6e-5; // scale spring constants to stabilize further
+    const restarts = 7;
+    const kScale = 4e-5; // scale spring constants to stabilize further
     for (let rs = 0; rs < restarts; rs++) {
       // Init positions on a circle, alternating words and categories around the ring
       let x = new Array(N), y = new Array(N);
@@ -559,7 +559,7 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
         y[idx] = height / 2 + Math.sin(a) * radius0;
       }
       // Gradient descent on stress
-      const iters = 1200;
+      const iters = 2500;
       const step0 = 0.0015;
       let calmIters = 0;
       for (let it = 0; it < iters; it++) {
@@ -1096,7 +1096,7 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
 
   let firstTickLogged = false;
   simulation.alpha(0); // start paused to let KK seed positions be visible
-  setTimeout(() => simulation.alpha(0.4).restart(), 60); // then relax
+  setTimeout(() => simulation.alpha(0.4).restart(), 120); // then relax
   simulation.on('tick', () => {
     link
       .attr('x1', d => d.source.x)
