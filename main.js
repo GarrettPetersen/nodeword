@@ -1162,8 +1162,28 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!wordData) wordData = await fetchWordData();
       const cfg = NODEWORD_CONFIG;
       const target = Math.min(Math.max(5, currentTargetWords), maxTargetWords);
-      console.log('[Nodeword] Generating graph with constraints…', { ...cfg, targetWords: target });
-      const graph = generatePuzzleGraph(wordData, target, cfg.maxDegree, cfg.maxAttempts);
+      // Validate saved puzzle
+      function validateSavedPuzzle(saved) {
+        if (!saved || !saved.graph) return false;
+        const g = saved.graph;
+        if (!Array.isArray(g.words) || !Array.isArray(g.categories) || !Array.isArray(g.edges)) return false;
+        for (const w of g.words) { if (!wordData[w] || !Array.isArray(wordData[w])) return false; }
+        const catsSet = new Set(g.categories);
+        for (const e of g.edges) {
+          if (!e || typeof e.word !== 'string' || typeof e.category !== 'string') return false;
+          if (!wordData[e.word] || !wordData[e.word].includes(e.category)) return false;
+          if (!catsSet.has(e.category)) return false;
+        }
+        if (saved.assignment) {
+          const wordsSet = new Set(g.words);
+          for (const [, assignedWord] of Object.entries(saved.assignment)) {
+            if (!wordsSet.has(assignedWord)) return false;
+          }
+        }
+        return true;
+      }
+      const savedValid = validateSavedPuzzle(appState.puzzle) && appState.puzzle.target === target;
+      let graph = savedValid ? appState.puzzle.graph : generatePuzzleGraph(wordData, target, cfg.maxDegree, cfg.maxAttempts);
       console.log('[Nodeword] Graph generated:', {
         words: graph.words.length,
         categories: graph.categories.length,
@@ -1173,7 +1193,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const catEmojis = await fetchCategoryEmojis();
       // Provide persistence adapter
       const persist = {
-        restore: appState.puzzle && appState.puzzle.target === target ? {
+        restore: savedValid ? {
           nodePositions: appState.puzzle.nodePositions || null,
           assignment: appState.puzzle.assignment || null,
           solved: appState.puzzle.solved || false,
