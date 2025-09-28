@@ -600,6 +600,7 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
       if (stress < bestStress) { bestStress = stress; bestX = x; bestY = y; }
     }
     const x = bestX, y = bestY;
+    console.log('[Nodeword] KK prelayout complete. stress=', Number(bestStress.toFixed(2)));
     // Normalize to padded viewport
     let minX = Math.min(...x), maxX = Math.max(...x);
     let minY = Math.min(...y), maxY = Math.max(...y);
