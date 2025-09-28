@@ -536,17 +536,27 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     const L = (i, j) => (dist[i][j] >= INF ? Lmax : (Lmin + (Lmax - Lmin) * (dist[i][j] / dmax)));
     const K = (i, j) => (dist[i][j] <= 0 || dist[i][j] >= INF ? 0 : 1 / (dist[i][j] * dist[i][j]));
     let bestStress = Infinity; let bestX = null, bestY = null;
-    const restarts = 3;
-    const kScale = 1e-4; // scale spring constants to stabilize
+    const restarts = 5;
+    const kScale = 6e-5; // scale spring constants to stabilize further
     for (let rs = 0; rs < restarts; rs++) {
-      // Init positions randomly on a circle with a phase offset per restart
+      // Init positions on a circle, alternating words and categories around the ring
       let x = new Array(N), y = new Array(N);
-      const phase = Math.random() * 2 * Math.PI;
       const radius0 = Math.min(width, height) * 0.25;
-      for (let i = 0; i < N; i++) {
-        const a = phase + (2 * Math.PI * i) / N;
-        x[i] = width / 2 + Math.cos(a) * radius0;
-        y[i] = height / 2 + Math.sin(a) * radius0;
+      const wordsIdx = nodes.map((n, i) => ({ n, i })).filter(v => v.n.type === 'word').map(v => v.i);
+      const catsIdx = nodes.map((n, i) => ({ n, i })).filter(v => v.n.type === 'category').map(v => v.i);
+      const orderIdx = [];
+      const maxLen = Math.max(wordsIdx.length, catsIdx.length);
+      for (let k = 0; k < maxLen; k++) {
+        if (k < wordsIdx.length) orderIdx.push(wordsIdx[k]);
+        if (k < catsIdx.length) orderIdx.push(catsIdx[k]);
+      }
+      // If counts are very uneven, ensure we still place all nodes
+      for (let i = 0; i < N; i++) if (!orderIdx.includes(i)) orderIdx.push(i);
+      for (let p = 0; p < N; p++) {
+        const idx = orderIdx[p];
+        const a = (2 * Math.PI * p) / N;
+        x[idx] = width / 2 + Math.cos(a) * radius0;
+        y[idx] = height / 2 + Math.sin(a) * radius0;
       }
       // Gradient descent on stress
       const iters = 1200;
@@ -1039,8 +1049,8 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     }).strength(0.85))
     // Light lane separation: words to left band, categories to right band
     .force('laneX', d3.forceX(d => d.type === 'word' ? (width * 0.35) : (width * 0.65)).strength(0.03))
-    .force('catCentroid', categoryCentroidForce(0.035))
-    .force('antiCross', antiCrossingForce(0.12))
+    .force('catCentroid', categoryCentroidForce(0.03))
+    .force('antiCross', antiCrossingForce(0.1))
     .force('boundary', boundaryForce);
 
   // Nuclear option: iterative auto-fit scaling
@@ -1083,6 +1093,8 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
   }
 
   let firstTickLogged = false;
+  simulation.alpha(0); // start paused to let KK seed positions be visible
+  setTimeout(() => simulation.alpha(0.4).restart(), 60); // then relax
   simulation.on('tick', () => {
     link
       .attr('x1', d => d.source.x)
