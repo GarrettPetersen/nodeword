@@ -919,7 +919,7 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
 
   const computePadding = () => Math.max(24, Math.round(Math.min(width, height) * 0.06));
   let basePadding = computePadding();
-  const boundaryK = 0.08; // gentler boundary pushback
+  const boundaryK = 0.06; // gentler boundary pushback
 
   function boundaryForce() {
     // Custom force to nudge nodes back within bounds
@@ -938,13 +938,14 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     .velocityDecay(0.85)
     .alphaDecay(0.08)
     .alphaMin(0.02)
-    .force('link', d3.forceLink(links).id(d => d.alias).distance(72).strength(0.75))
-    .force('charge', d3.forceManyBody().strength(d => d.type === 'word' ? -140 - (circleMetrics.get(d.alias)?.radius || 0) * 1.2 : -140))
+    .force('link', d3.forceLink(links).id(d => d.alias).distance(104).strength(0.6))
+    .force('charge', d3.forceManyBody().strength(d => d.type === 'word' ? -240 - (circleMetrics.get(d.alias)?.radius || 0) * 1.4 : -200))
     .force('collide', d3.forceCollide().radius(d => {
       const extra = d.type === 'word' ? (circleMetrics.get(d.alias)?.radius || 0) : 0;
-      return radius(d) + 10 + extra;
-    }).strength(0.9))
-    .force('center', d3.forceCenter(width / 2, height / 2))
+      return radius(d) + 12 + extra;
+    }).strength(0.85))
+    // Light lane separation: words to left band, categories to right band
+    .force('laneX', d3.forceX(d => d.type === 'word' ? (width * 0.35) : (width * 0.65)).strength(0.03))
     .force('boundary', boundaryForce);
 
   // Nuclear option: iterative auto-fit scaling
@@ -1021,8 +1022,8 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     height = Math.min(820, Math.max(520, Math.floor(window.innerHeight * 0.75)));
     basePadding = computePadding();
     svg.attr('width', width).attr('height', height);
-    // Update center force to new viewport
-    simulation.force('center', d3.forceCenter(width / 2, height / 2));
+    // Update lane force target on resize
+    simulation.force('laneX', d3.forceX(d => d.type === 'word' ? (width * 0.35) : (width * 0.65)).strength(0.03));
     // Immediately translate nodes toward the new center so they don't sit offscreen
     const dx = (width - prevW) / 2;
     const dy = (height - prevH) / 2;
