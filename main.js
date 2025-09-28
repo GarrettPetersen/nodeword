@@ -480,6 +480,7 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
 
   const nodes = aliasGraph.nodes.map(n => ({ ...n }));
   const links = aliasGraph.links.map(l => ({ ...l }));
+  const aliasToNode = new Map(nodes.map(n => [n.alias, n]));
 
   console.log('[Nodeword] Rendering force graph:', {
     words: nodes.filter(n => n.type === 'word').length,
@@ -644,7 +645,7 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
       d.fx = null; d.fy = null;
     });
 
-  node.filter(d => d.type === 'word').call(dragBehavior);
+  node.call(dragBehavior);
 
   const radius = d => d.type === 'category' ? 16 : 12;
 
@@ -694,6 +695,27 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     const arr = catToWordAliases.get(catAlias) || [];
     arr.push(wordAlias);
     catToWordAliases.set(catAlias, arr);
+  }
+
+  // Custom force: pull category diamonds toward the centroid of their attached words
+  function categoryCentroidForce(strength = 0.04) {
+    return () => {
+      for (const [catAlias, wordAliases] of catToWordAliases.entries()) {
+        if (!wordAliases || wordAliases.length === 0) continue;
+        const cn = aliasToNode.get(catAlias);
+        if (!cn) continue;
+        let cx = 0, cy = 0, n = 0;
+        for (const wa of wordAliases) {
+          const wn = aliasToNode.get(wa);
+          if (!wn || typeof wn.x !== 'number' || typeof wn.y !== 'number') continue;
+          cx += wn.x; cy += wn.y; n++;
+        }
+        if (n === 0) continue;
+        cx /= n; cy /= n;
+        cn.vx += (cx - cn.x) * strength;
+        cn.vy += (cy - cn.y) * strength;
+      }
+    };
   }
 
   function countSolvedForAssignment(assignMap) {
@@ -965,6 +987,7 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     }).strength(0.85))
     // Light lane separation: words to left band, categories to right band
     .force('laneX', d3.forceX(d => d.type === 'word' ? (width * 0.35) : (width * 0.65)).strength(0.03))
+    .force('catCentroid', categoryCentroidForce(0.035))
     .force('boundary', boundaryForce);
 
   // Nuclear option: iterative auto-fit scaling
