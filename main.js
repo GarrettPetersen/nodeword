@@ -628,20 +628,23 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     .data(nodes, d => d.alias)
     .enter()
     .append('g')
-    .attr('class', d => `node ${d.type}`)
-    .call(d3.drag()
-      .on('start', (event, d) => {
-        if (!event.active) simulation.alphaTarget(0.08).restart();
-        d.fx = d.x; d.fy = d.y;
-      })
-      .on('drag', (event, d) => {
-        d.fx = event.x; d.fy = event.y;
-      })
-      .on('end', (event, d) => {
-        if (!event.active) simulation.alphaTarget(0);
-        d.fx = null; d.fy = null;
-      })
-    );
+    .attr('class', d => `node ${d.type}`);
+
+  // Make only word nodes draggable; categories (diamonds) are not draggable and remain fully in the force sim
+  const dragBehavior = d3.drag()
+    .on('start', (event, d) => {
+      if (!event.active) simulation.alphaTarget(0.08).restart();
+      d.fx = d.x; d.fy = d.y;
+    })
+    .on('drag', (event, d) => {
+      d.fx = event.x; d.fy = event.y;
+    })
+    .on('end', (event, d) => {
+      if (!event.active) simulation.alphaTarget(0);
+      d.fx = null; d.fy = null;
+    });
+
+  node.filter(d => d.type === 'word').call(dragBehavior);
 
   const radius = d => d.type === 'category' ? 16 : 12;
 
@@ -722,15 +725,15 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
 
   let assignment;
   const restoredSolved = Boolean(persist && persist.restore && persist.restore.solved);
-  if (persist && persist.restore && persist.restore.assignment) {
-    assignment = new Map(Object.entries(persist.restore.assignment));
-  } else if (restoredSolved) {
-    // Fallback: canonical assignment if solved but no assignment stored
+  if (restoredSolved) {
+    // Force canonical assignment on solved restore to present a clean solved state
     assignment = new Map();
-    const wordAliasesInOrder = nodes.filter(n=>n.type==='word').map(n=>n.alias);
-    for (let i = 0; i < wordAliasesInOrder.length; i++) {
-      assignment.set(wordAliasesInOrder[i], aliasGraph.nodes.filter(n=>n.type==='word')[i].id);
+    for (let i = 0; i < graph.words.length; i++) {
+      const alias = `W${i + 1}`;
+      assignment.set(alias, graph.words[i]);
     }
+  } else if (persist && persist.restore && persist.restore.assignment) {
+    assignment = new Map(Object.entries(persist.restore.assignment));
   } else {
     let bestAssignment = null;
     let bestSolved = Infinity;
