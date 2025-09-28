@@ -718,6 +718,53 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     };
   }
 
+  // Custom force: repel intersecting edges (anti-crossing)
+  function antiCrossingForce(strength = 0.12) {
+    function toNode(end) {
+      if (!end) return null;
+      if (typeof end === 'string') return aliasToNode.get(end) || null;
+      // d3 may set source/target to node objects
+      if (end.alias) return end;
+      return null;
+    }
+    function segsIntersect(a1, a2, b1, b2) {
+      const d = (p, q, r) => (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+      const o1 = d(a1, a2, b1);
+      const o2 = d(a1, a2, b2);
+      const o3 = d(b1, b2, a1);
+      const o4 = d(b1, b2, a2);
+      return (o1 * o2 < 0) && (o3 * o4 < 0);
+    }
+    return () => {
+      const L = links.length;
+      for (let i = 0; i < L; i++) {
+        const l1 = links[i];
+        const s1 = toNode(l1.source); const t1 = toNode(l1.target);
+        if (!s1 || !t1) continue;
+        for (let j = i + 1; j < L; j++) {
+          const l2 = links[j];
+          // Skip if sharing endpoints
+          if (l1.source === l2.source || l1.source === l2.target || l1.target === l2.source || l1.target === l2.target) continue;
+          const s2 = toNode(l2.source); const t2 = toNode(l2.target);
+          if (!s2 || !t2) continue;
+          if (!segsIntersect(s1, t1, s2, t2)) continue;
+          // Compute midpoints and apply perpendicular impulses to separate
+          const m1x = (s1.x + t1.x) / 2, m1y = (s1.y + t1.y) / 2;
+          const m2x = (s2.x + t2.x) / 2, m2y = (s2.y + t2.y) / 2;
+          let vx = m1x - m2x, vy = m1y - m2y;
+          let len = Math.hypot(vx, vy);
+          if (len < 1e-6) { // pick a perpendicular to l1
+            vx = t1.y - s1.y; vy = -(t1.x - s1.x); len = Math.hypot(vx, vy) || 1; 
+          }
+          vx /= len; vy /= len;
+          const k = strength;
+          s1.vx += vx * k; s1.vy += vy * k; t1.vx += vx * k; t1.vy += vy * k;
+          s2.vx -= vx * k; s2.vy -= vy * k; t2.vx -= vx * k; t2.vy -= vy * k;
+        }
+      }
+    };
+  }
+
   function countSolvedForAssignment(assignMap) {
     let solved = 0;
     for (const [catAlias, wordAliases] of catToWordAliases.entries()) {
@@ -988,6 +1035,7 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     // Light lane separation: words to left band, categories to right band
     .force('laneX', d3.forceX(d => d.type === 'word' ? (width * 0.35) : (width * 0.65)).strength(0.03))
     .force('catCentroid', categoryCentroidForce(0.035))
+    .force('antiCross', antiCrossingForce(0.12))
     .force('boundary', boundaryForce);
 
   // Nuclear option: iterative auto-fit scaling
