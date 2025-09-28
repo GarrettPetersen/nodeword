@@ -1272,6 +1272,22 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!wordData) wordData = await fetchWordData();
       const cfg = NODEWORD_CONFIG;
       const target = Math.min(Math.max(5, currentTargetWords), maxTargetWords);
+      // If a solved puzzle is saved for this target, display it as-is (no generation)
+      const saved = appState.puzzle;
+      if (saved && saved.solved === true && saved.target === target && saved.graph) {
+        const graph = saved.graph;
+        console.log('[Nodeword] Restoring solved puzzle from save');
+        const aliasGraph = toAliasGraph(graph);
+        const catEmojis = await fetchCategoryEmojis();
+        const persist = {
+          restore: { nodePositions: saved.nodePositions || null, assignment: saved.assignment || null, solved: true },
+          save(payload) { /* solved: do nothing */ }
+        };
+        renderForceGraph(container, aliasGraph, wordData, catEmojis, persist);
+        console.log('[Nodeword] Graph rendered to SVG (solved restore)');
+        return;
+      }
+
       // Validate saved puzzle
       function validateSavedPuzzle(saved) {
         if (!saved || !saved.graph) return false;
@@ -1323,18 +1339,39 @@ document.addEventListener("DOMContentLoaded", () => {
         } catch { return false; }
       }
 
+      async function generateGraphWithRetries(targetWords) {
+        const multipliers = [1, 2, 3, 4];
+        for (const mult of multipliers) {
+          try {
+            const g = generatePuzzleGraph(wordData, targetWords, cfg.maxDegree, cfg.maxAttempts * mult);
+            if (isSolvableByCanonical(g)) return g;
+          } catch (e) {
+            console.warn('[Nodeword] generation attempt failed (mult=', mult, '):', e.message || e);
+          }
+        }
+        // Last resort: try once without canonical check but catch errors
+        try {
+          return generatePuzzleGraph(wordData, targetWords, cfg.maxDegree, cfg.maxAttempts * 5);
+        } catch (e) {
+          console.error('[Nodeword] final generation failed:', e.message || e);
+          return null;
+        }
+      }
+
       const savedValid = validateSavedPuzzle(appState.puzzle) && appState.puzzle.target === target && isSolvableByCanonical(appState.puzzle.graph);
       let graph;
       if (savedValid) {
         graph = appState.puzzle.graph;
       } else {
-        let attempts = 0;
-        do {
-          if (attempts === 0) console.log('[Nodeword] Generating graph with constraints…', { ...cfg, targetWords: target });
-          graph = generatePuzzleGraph(wordData, target, cfg.maxDegree, cfg.maxAttempts);
-          attempts++;
-        } while (!isSolvableByCanonical(graph) && attempts < 6);
+        console.log('[Nodeword] Generating graph with constraints…', { ...cfg, targetWords: target });
+        graph = await generateGraphWithRetries(target);
         if (appState.puzzle) { appState.puzzle = null; writeState(appState); }
+        if (!graph) {
+          // Give up gracefully: inform and try again with a fresh state
+          console.warn('[Nodeword] Unable to generate puzzle after retries, retrying fresh…');
+          setTimeout(() => generateAndRender(), 50);
+          return;
+        }
       }
       console.log('[Nodeword] Graph generated:', {
         words: graph.words.length,
