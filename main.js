@@ -278,10 +278,10 @@ function generatePuzzleGraph(wordToCategories, targetWordCount = 12, maxDegree =
               const c1 = cats[i], c2 = cats[j];
               if (!categoryToWords.has(c1) || !categoryToWords.has(c2)) continue;
               if (!categorySet.has(c1) && !categorySet.has(c2)) continue; // keep connectivity
-          // Try to add the word with both categories (and any other applicable puzzle categories)
-          if (attemptAddWordWithRequiredCategories(w, [c1, c2])) {
-            addedFinal = true;
-          }
+              // Try to add the word with both categories (and any other applicable puzzle categories)
+              if (attemptAddWordWithRequiredCategories(w, [c1, c2])) {
+                addedFinal = true;
+              }
               break;
             }
           }
@@ -631,6 +631,59 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
   // Set of categories that exist in THIS puzzle (restrict emoji logic to these)
   const puzzleCategories = new Set(nodes.filter(n => n.type === 'category').map(n => n.id));
 
+  // Brand-aligned per-category colors (deterministic per puzzle)
+  const categoryColorById = (() => {
+    const ids = Array.from(puzzleCategories);
+
+    function hash32(str) {
+      // Simple FNV-1a 32-bit hash for determinism
+      let h = 0x811c9dc5;
+      for (let i = 0; i < str.length; i++) {
+        h ^= str.charCodeAt(i);
+        h = Math.imul(h, 0x01000193);
+      }
+      // Ensure unsigned 32-bit
+      return (h >>> 0);
+    }
+
+    // Create a deterministic pseudo-random order of category ids for color assignment
+    const seed = hash32(ids.join('|'));
+    const scored = ids.map(id => ({ id, score: hash32(String(seed) + '|' + id) }));
+    scored.sort((a, b) => a.score - b.score);
+    const orderedIds = scored.map(s => s.id);
+
+    function hsl(h, s, l) {
+      return `hsl(${Math.round(h)}, ${Math.round(s)}%, ${Math.round(l)}%)`;
+    }
+
+    function generateBrandColors(count) {
+      // Interpolate hues between cyan (~190) and violet (~275) to stay on brand
+      const startHue = 190;
+      const endHue = 275;
+      const hues = [];
+      if (count <= 1) {
+        hues.push((startHue + endHue) / 2);
+      } else {
+        for (let i = 0; i < count; i++) {
+          const t = i / (count - 1);
+          const hue = startHue + t * (endHue - startHue);
+          hues.push(hue);
+        }
+      }
+      // Strong saturation and mid lightness for good contrast on dark bg
+      const saturation = 90;
+      const lightness = 55;
+      return hues.map(h => hsl(h, saturation, lightness));
+    }
+
+    const colors = generateBrandColors(orderedIds.length);
+    const map = new Map();
+    for (let i = 0; i < orderedIds.length; i++) {
+      map.set(orderedIds[i], colors[i]);
+    }
+    return map;
+  })();
+
   const link = scene.append('g')
     .attr('stroke-linecap', 'round')
     .selectAll('line')
@@ -769,7 +822,7 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
           let vx = m1x - m2x, vy = m1y - m2y;
           let len = Math.hypot(vx, vy);
           if (len < 1e-6) { // pick a perpendicular to l1
-            vx = t1.y - s1.y; vy = -(t1.x - s1.x); len = Math.hypot(vx, vy) || 1; 
+            vx = t1.y - s1.y; vy = -(t1.x - s1.x); len = Math.hypot(vx, vy) || 1;
           }
           vx /= len; vy /= len;
           const k = strength;
@@ -857,7 +910,7 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
   wordCircleG.append('circle')
     .attr('r', d => (circleMetrics.get(d.alias)?.radius || 24));
 
-  wordCircleG.each(function(d) {
+  wordCircleG.each(function (d) {
     const g = d3.select(this);
     const w = assignment.get(d.alias);
     const m = circleMetrics.get(d.alias);
@@ -886,18 +939,18 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
   // Maintain mapping from node alias to assigned word
   const nodeAliasToWord = new Map(assignment);
   const wordCircleByAlias = new Map();
-  wordCircleG.each(function(d) { wordCircleByAlias.set(d.alias, d3.select(this)); });
+  wordCircleG.each(function (d) { wordCircleByAlias.set(d.alias, d3.select(this)); });
   // Persist initial assignment
   if (persist && typeof persist.save === 'function') {
-    const asn0 = {}; nodeAliasToWord.forEach((v,k)=>asn0[k]=v);
+    const asn0 = {}; nodeAliasToWord.forEach((v, k) => asn0[k] = v);
     persist.save({ assignment: asn0, solved });
   }
 
   // Build helper maps for highlighting
   const categoryNodeByAlias = new Map();
-  catNodes.each(function(d){ categoryNodeByAlias.set(d.alias, d3.select(this)); });
+  catNodes.each(function (d) { categoryNodeByAlias.set(d.alias, d3.select(this)); });
   const linksByCategory = new Map();
-  link.each(function(l){
+  link.each(function (l) {
     const cat = typeof l.target === 'string' ? l.target : l.target.alias;
     const arr = linksByCategory.get(cat) || [];
     arr.push(d3.select(this));
@@ -943,6 +996,15 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
       const emojiChar = common ? (categoryEmojis[common] || '✅') : '';
       const textSel = catSel.select('text.cat-emoji');
       textSel.text(emojiChar);
+      // Apply per-category fill color to the diamond when highlighted
+      const rectSel = catSel.select('rect');
+      if (highlight && common) {
+        const fillColor = categoryColorById.get(common) || null;
+        if (fillColor) rectSel.style('fill', fillColor);
+      } else {
+        // Remove inline style to revert to CSS default when not highlighted
+        rectSel.style('fill', null);
+      }
       // Category name label only after entire puzzle is solved
       const labelSel = catSel.select('text.cat-label');
       labelSel.text(highlight && solved ? (common || '') : '');
@@ -951,7 +1013,7 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     }
   }
 
-  wordCircleG.on('click', function(event, d) {
+  wordCircleG.on('click', function (event, d) {
     event.stopPropagation();
     const me = d3.select(this);
     if (!selected) {
@@ -1172,15 +1234,15 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
         try {
           const raw = localStorage.getItem('nodeword_state_v1');
           const s = raw ? JSON.parse(raw) : {};
-          const today = (()=>{const d=new Date();return `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`;})();
+          const today = (() => { const d = new Date(); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; })();
           if (s.lastDay !== today) { s.today = 0; s.lastDay = today; }
-          s.total = (s.total||0)+1; s.today=(s.today||0)+1; s.best = Math.max(s.best||0, s.today||0);
-          s.puzzle = {...(s.puzzle||{}), solved:true};
+          s.total = (s.total || 0) + 1; s.today = (s.today || 0) + 1; s.best = Math.max(s.best || 0, s.today || 0);
+          s.puzzle = { ...(s.puzzle || {}), solved: true };
           localStorage.setItem('nodeword_state_v1', JSON.stringify(s));
-          const statTotal = document.getElementById('statTotal'); if (statTotal) statTotal.textContent = String(s.total||0);
-          const statToday = document.getElementById('statToday'); if (statToday) statToday.textContent = String(s.today||0);
-          const statBest = document.getElementById('statBest'); if (statBest) statBest.textContent = String(s.best||0);
-        } catch {}
+          const statTotal = document.getElementById('statTotal'); if (statTotal) statTotal.textContent = String(s.total || 0);
+          const statToday = document.getElementById('statToday'); if (statToday) statToday.textContent = String(s.today || 0);
+          const statBest = document.getElementById('statBest'); if (statBest) statBest.textContent = String(s.best || 0);
+        } catch { }
       }
     } else {
       console.log('[Nodeword] NOT SOLVED: remaining diamonds', unsolvedCount);
@@ -1198,7 +1260,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const title = document.querySelector("h1");
   if (title) {
     title.animate(
-      [ { transform: "translateY(8px)", opacity: 0 }, { transform: "translateY(0)", opacity: 1 } ],
+      [{ transform: "translateY(8px)", opacity: 0 }, { transform: "translateY(0)", opacity: 1 }],
       { duration: 600, easing: "cubic-bezier(.2,.8,.2,1)", fill: "both" }
     );
   }
@@ -1222,11 +1284,11 @@ document.addEventListener("DOMContentLoaded", () => {
   function canPersist() { return appState && appState.consent === true; }
   function writeState(s) {
     if (!canPersist()) return;
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); } catch {}
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); } catch { }
   }
   function todayStamp() {
     const d = new Date();
-    return `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`;
+    return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
   }
   function initState() {
     const today = todayStamp();
@@ -1247,7 +1309,7 @@ document.addEventListener("DOMContentLoaded", () => {
   function showConsentIfNeeded() { if (consent) consent.hidden = !(appState.consent === null); }
   showConsentIfNeeded();
   acceptConsent?.addEventListener('click', () => { appState.consent = true; writeState(appState); showConsentIfNeeded(); });
-  declineConsent?.addEventListener('click', () => { appState.consent = false; try { localStorage.removeItem(STORAGE_KEY); } catch {} showConsentIfNeeded(); });
+  declineConsent?.addEventListener('click', () => { appState.consent = false; try { localStorage.removeItem(STORAGE_KEY); } catch { } showConsentIfNeeded(); });
   function openStats() { if (statsModal) statsModal.hidden = false; }
   function closeStatsModal() { if (statsModal) statsModal.hidden = true; }
   statsBtn?.addEventListener('click', openStats);
@@ -1313,14 +1375,14 @@ document.addEventListener("DOMContentLoaded", () => {
       function isSolvableByCanonical(g) {
         try {
           const alias = toAliasGraph(g);
-          const puzzleCategories = new Set(alias.nodes.filter(n=>n.type==='category').map(n=>n.id));
+          const puzzleCategories = new Set(alias.nodes.filter(n => n.type === 'category').map(n => n.id));
           const catToWordAliases = new Map();
           for (const l of alias.links) {
             const ca = l.target; const wa = l.source;
             const arr = catToWordAliases.get(ca) || []; arr.push(wa); catToWordAliases.set(ca, arr);
           }
           const wordAliasToWord = new Map();
-          alias.nodes.filter(n=>n.type==='word').forEach((n, i)=>{ wordAliasToWord.set(n.alias, g.words[i]); });
+          alias.nodes.filter(n => n.type === 'word').forEach((n, i) => { wordAliasToWord.set(n.alias, g.words[i]); });
           for (const [catAlias, wordAliases] of catToWordAliases.entries()) {
             if (!wordAliases || wordAliases.length === 0) return false;
             let intersection = null;
