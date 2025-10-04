@@ -2,6 +2,7 @@
 .consent[hidden] {
   display: none !important;
 }
+
 .consent {
   position: fixed;
   left: 0;
@@ -15,10 +16,11 @@
   z-index: 999;
   pointer-events: none;
 }
+
 .consent-card {
   width: min(92vw, 520px);
   background: rgba(15, 18, 32, 0.96);
-  border: 1px solid rgba(255,255,255,0.12);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 12px;
   padding: 16px;
   color: var(--text);
@@ -26,19 +28,69 @@
   overflow: auto;
   pointer-events: auto;
 }
-.consent-actions { display: flex; gap: 8px; justify-content: flex-end; }
-.consent-actions button { min-width: 96px; }
 
-@media (max-width: 420px) {
-  .consent { padding: 8px; padding-bottom: calc(8px + env(safe-area-inset-bottom)); }
-  .consent-card { padding: 12px; max-height: 70vh; }
-  .consent-actions { position: sticky; bottom: 0; background: rgba(15,18,32,0.98); border-top: 1px solid rgba(255,255,255,0.12); padding-top: 8px; }
-  .consent-actions button { flex: 1 1 auto; }
+.consent-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
-.modal { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; display: grid; place-items: center; background: rgba(0,0,0,0.35); z-index: 1000; }
-.modal-card { background: rgba(15, 18, 32, 0.98); border: 1px solid rgba(255,255,255,0.15); border-radius: 12px; padding: 16px 18px; min-width: 260px; color: var(--text); }
-.modal-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
+.consent-actions button {
+  min-width: 96px;
+}
+
+@media (max-width: 420px) {
+  .consent {
+    padding: 8px;
+    padding-bottom: calc(8px + env(safe-area-inset-bottom));
+  }
+
+  .consent-card {
+    padding: 12px;
+    max-height: 70vh;
+  }
+
+  .consent-actions {
+    position: sticky;
+    bottom: 0;
+    background: rgba(15, 18, 32, 0.98);
+    border-top: 1px solid rgba(255, 255, 255, 0.12);
+    padding-top: 8px;
+  }
+
+  .consent-actions button {
+    flex: 1 1 auto;
+  }
+}
+
+.modal {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 100vw;
+  height: 100vh;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: 1000;
+}
+
+.modal-card {
+  background: rgba(15, 18, 32, 0.98);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 12px;
+  padding: 16px 18px;
+  min-width: 260px;
+  color: var(--text);
+  text-align: left;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
 :root {
   --bg: #0f1220;
   --bg-accent: #151933;
@@ -52,7 +104,8 @@
   box-sizing: border-box;
 }
 
-html, body {
+html,
+body {
   min-height: 100%;
 }
 
@@ -60,8 +113,8 @@ body {
   margin: 0;
   color: var(--text);
   background: radial-gradient(1000px 600px at 10% 10%, var(--bg-accent), transparent),
-              radial-gradient(800px 500px at 90% 20%, #0b1028, transparent),
-              linear-gradient(180deg, var(--bg), #0a0d1a);
+    radial-gradient(800px 500px at 90% 20%, #0b1028, transparent),
+    linear-gradient(180deg, var(--bg), #0a0d1a);
   font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
@@ -76,13 +129,13 @@ body {
   text-align: center;
 }
 
-#app > * {
+#app>* {
   max-width: 720px;
 }
 
 /* Overlays must not be constrained by #app child max-width */
-#app > .modal,
-#app > .consent {
+#app>.modal,
+#app>.consent {
   max-width: none;
 }
 
@@ -114,6 +167,7 @@ h1 {
   justify-content: center;
   gap: 12px;
 }
+
 #status {
   margin-top: 12px;
   text-align: center;
@@ -180,7 +234,7 @@ a:hover {
 }
 
 .link {
-  stroke: rgba(255,255,255,0.25);
+  stroke: rgba(255, 255, 255, 0.25);
   stroke-width: 1.5;
 }
 
@@ -190,21 +244,21 @@ a:hover {
 }
 
 .node circle {
-  stroke: rgba(255,255,255,0.9);
+  stroke: rgba(255, 255, 255, 0.9);
   stroke-width: 1px;
 }
 
 .node.word circle {
-  fill: rgba(0,229,255,0.7);
+  fill: rgba(0, 229, 255, 0.7);
 }
 
 .node.category circle {
-  fill: rgba(124,77,255,0.7);
+  fill: rgba(124, 77, 255, 0.7);
 }
 
 .node.category rect {
   fill: #9aa3b0;
-  stroke: rgba(255,255,255,0.5);
+  stroke: rgba(255, 255, 255, 0.5);
   stroke-width: 1px;
 }
 
@@ -247,7 +301,8 @@ a:hover {
 }
 
 .word-circle circle {
-  fill: #4e3aa9; /* dark-ish purple */
+  fill: #4e3aa9;
+  /* dark-ish purple */
   stroke: var(--brand);
   stroke-width: 2px;
 }
@@ -278,7 +333,7 @@ a:hover {
 .word-circle.selected circle {
   stroke: #00e5ff;
   stroke-width: 3px;
-  filter: drop-shadow(0 0 8px rgba(0,229,255,0.5));
+  filter: drop-shadow(0 0 8px rgba(0, 229, 255, 0.5));
 }
 
 .graph {
@@ -303,7 +358,7 @@ a:hover {
 
 .chip {
   background: #0f1220;
-  border: 1px solid rgba(255,255,255,0.08);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 999px;
   padding: 6px 10px;
   font-size: 13px;
@@ -313,5 +368,3 @@ a:hover {
   font-size: 12px;
   color: var(--muted);
 }
-
-

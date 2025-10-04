@@ -25,8 +25,7 @@
       <div id="levelIndicator" class="level" aria-live="polite"></div>
       <div class="actions">
         <button class="primary" id="nextBtn">Next puzzle</button>
-        <button class="primary" id="shareBtn" style="display:none">Share</button>
-        <button class="primary" id="statsBtn" style="position: fixed; top: 12px; right: 12px; z-index: 10;">Stats</button>
+        <button class="primary" id="statsBtn" style="position: fixed; top: 12px; right: 12px; z-index: 10;">Info</button>
       </div>
       <section id="puzzle" aria-live="polite"></section>
       <div id="status" aria-live="polite"></div>
@@ -49,29 +48,29 @@
 
       <div id="statsModal" class="modal" role="dialog" aria-modal="true" hidden>
         <div class="modal-card">
-          <h3>Stats</h3>
-          <ul>
-            <li>Total puzzles solved: <span id="statTotal">0</span></li>
-            <li>Streak (perfect days in a row): <span id="statStreak">0</span></li>
-            <li>Total perfect days: <span id="statPerfectDays">0</span></li>
-          </ul>
+          <h3>Info</h3>
+          <section aria-labelledby="howto-heading" style="margin-bottom: 12px;">
+            <h4 id="howto-heading" style="margin: 0 0 8px;">How to play</h4>
+            <ul style="margin: 0 0 12px 18px;">
+              <li>Click two different word circles to swap their positions.</li>
+              <li>Every word belongs to one or more hidden categories.</li>
+              <li>When all words connected to a diamond share a category, the diamond reveals that category’s emoji and fills with its color.</li>
+              <li>Complete all diamonds to solve the puzzle.</li>
+              <li>After each solve, the “Next puzzle” button appears to take you to the next level. The next puzzle has one additional word (to a maximum of 12).</li>
+              <li>Levels reset daily at midnight.</li>
+            </ul>
+            <p>Tip: Drag diamonds to rearrange them, making connections easier to see.</p>
+          </section>
+          <section aria-labelledby="stats-heading">
+            <h4 id="stats-heading" style="margin: 0 0 8px;">Your stats</h4>
+            <ul style="margin: 0 0 0 18px;">
+              <li>Total solved: <span id="statTotal">0</span></li>
+              <li>Solved today: <span id="statToday">0</span></li>
+              <li>Best day: <span id="statBest">0</span></li>
+            </ul>
+          </section>
           <div class="modal-actions">
             <button class="primary" id="closeStats">Close</button>
-          </div>
-        </div>
-      </div>
-
-      <div id="shareModal" class="modal" role="dialog" aria-modal="true" hidden>
-        <div class="modal-card">
-          <h3>Share</h3>
-          <pre id="shareText" class="share-preview"></pre>
-          <label style="display:flex; align-items:center; gap:8px; margin-top:8px;">
-            <input type="checkbox" id="includeLink" checked>
-            Include link
-          </label>
-          <div class="modal-actions" style="gap:8px;">
-            <button id="copyShare">Copy</button>
-            <button class="primary" id="closeShare">Close</button>
           </div>
         </div>
       </div>
