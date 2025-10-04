@@ -1,14 +1,63 @@
+// Seeded RNG utilities for deterministic daily puzzles
+let CURRENT_RNG = { random: () => Math.random() };
+function xmur3(str) { // hash to 32-bit seed
+  let h = 1779033703 ^ str.length;
+  for (let i = 0; i < str.length; i++) {
+    h = Math.imul(h ^ str.charCodeAt(i), 3432918353);
+    h = (h << 13) | (h >>> 19);
+  }
+  return function() {
+    h = Math.imul(h ^ (h >>> 16), 2246822507);
+    h = Math.imul(h ^ (h >>> 13), 3266489909);
+    return (h ^= h >>> 16) >>> 0;
+  };
+}
+function mulberry32(a) {
+  return function() {
+    let t = (a += 0x6D2B79F5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function makeRng(seedString) {
+  const seed = xmur3(String(seedString))();
+  const rand = mulberry32(seed);
+  return {
+    random: rand,
+    int(max) { return Math.floor(rand() * max); },
+    choice(arr) { return arr[this.int(arr.length)]; },
+    shuffle(arr) {
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(rand() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+      return arr;
+    }
+  };
+}
+function withSeed(seedString, fn) {
+  const prev = CURRENT_RNG;
+  try {
+    CURRENT_RNG = makeRng(seedString);
+    return fn();
+  } finally {
+    CURRENT_RNG = prev;
+  }
+}
+
 function getRandomInt(max) {
-  return Math.floor(Math.random() * max);
+  return Math.floor(CURRENT_RNG.random() * max);
 }
 
 function choice(array) {
+  if (!array || array.length === 0) return undefined;
   return array[getRandomInt(array.length)];
 }
 
 function shuffle(array) {
   for (let i = array.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(CURRENT_RNG.random() * (i + 1));
     [array[i], array[j]] = [array[j], array[i]];
   }
   return array;
@@ -646,10 +695,13 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     .append('g')
     .attr('class', d => `node ${d.type}`);
 
-  // Make only word nodes draggable; categories (diamonds) are not draggable and remain fully in the force sim
+  // Prepare category selection (base nodes); words have an overlay for dragging
+  const catNodes = node.filter(d => d.type === 'category');
+
+  // Make categories draggable via base nodes; words are dragged via overlay to avoid double-drag
   const dragBehavior = d3.drag()
     .on('start', (event, d) => {
-      if (!event.active) simulation.alphaTarget(0.08).restart();
+      if (!event.active) simulation.alphaTarget(0.03).restart();
       d.fx = d.x; d.fy = d.y;
     })
     .on('drag', (event, d) => {
@@ -660,7 +712,8 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
       d.fx = null; d.fy = null;
     });
 
-  node.call(dragBehavior);
+  // Drag only category base nodes; words are dragged via overlay to avoid double-drag
+  catNodes.call(dragBehavior);
 
   const radius = d => d.type === 'category' ? 16 : 12;
 
@@ -668,8 +721,6 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
   node.filter(d => d.type === 'word')
     .append('circle')
     .attr('r', radius);
-
-  const catNodes = node.filter(d => d.type === 'category');
   catNodes
     .append('rect')
     .attr('x', -12)
@@ -869,6 +920,14 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     }
   });
 
+  // Highlight first index word circle (W1) on final daily level (5)
+  try {
+    const isFinalLevel = Boolean(persist && persist.meta && persist.meta.levelToday === 5);
+    if (isFinalLevel) {
+      wordCircleG.filter(d => d.alias === 'W1').classed('highlighted', true);
+    }
+  } catch {}
+
   // Click handling for swapping circles between nodes
   let selected = null; // d (node datum) for selected word-circle
   let solved = restoredSolved;
@@ -882,6 +941,30 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     gSel.transition().duration(280).ease(d3.easeCubicOut)
       .attr('transform', `translate(${x},${y})`);
   }
+
+  // Make word circles draggable (overlay), mirroring node drag for diamonds
+  const dragWordOverlay = d3.drag()
+    .on('start', function(event, d) {
+      if (!event.active) simulation.alphaTarget(0.03).restart();
+      // Select on drag start so drag also selects
+      if (!solved) {
+        if (!selected || selected.alias !== d.alias) {
+          selected = d;
+          wordCircleG.classed('selected', false);
+          d3.select(this).classed('selected', true);
+        }
+      }
+      // Avoid stealing focus on simple clicks: only set fx/fy if movement starts
+    })
+    .on('drag', function(event, d) {
+      if (d.fx == null || d.fy == null) { d.fx = d.x; d.fy = d.y; }
+      d.fx = event.x; d.fy = event.y;
+    })
+    .on('end', function(event, d) {
+      if (!event.active) simulation.alphaTarget(0);
+      d.fx = null; d.fy = null;
+    });
+  wordCircleG.call(dragWordOverlay);
 
   // Maintain mapping from node alias to assigned word
   const nodeAliasToWord = new Map(assignment);
@@ -953,6 +1036,8 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
 
   wordCircleG.on('click', function(event, d) {
     event.stopPropagation();
+    // If a drag started (fx/fy set), treat this as drag-end not click-select
+    if (d.fx != null || d.fy != null) return;
     const me = d3.select(this);
     if (!selected) {
       selected = d;
@@ -996,7 +1081,7 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     }
 
     // Nudge simulation to settle with new radii
-    simulation.alpha(0.4).restart();
+    simulation.alpha(0.18).restart();
 
     // Visual: selected state cleared, and ensure both circles fly to their node positions on next tick
     deselect();
@@ -1044,7 +1129,7 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     .alphaDecay(0.08)
     .alphaMin(0.02)
     .force('link', d3.forceLink(links).id(d => d.alias).distance(104).strength(0.6))
-    .force('charge', d3.forceManyBody().strength(d => d.type === 'word' ? -240 - (circleMetrics.get(d.alias)?.radius || 0) * 1.4 : -200))
+    .force('charge', d3.forceManyBody().strength(d => d.type === 'word' ? -220 - (circleMetrics.get(d.alias)?.radius || 0) * 1.2 : -180))
     .force('collide', d3.forceCollide().radius(d => {
       const extra = d.type === 'word' ? (circleMetrics.get(d.alias)?.radius || 0) : 0;
       return radius(d) + 12 + extra;
@@ -1052,15 +1137,15 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     // Light lane separation: words to left band, categories to right band
     .force('laneX', d3.forceX(d => d.type === 'word' ? (width * 0.35) : (width * 0.65)).strength(0.03))
     .force('catCentroid', categoryCentroidForce(0.03))
-    .force('antiCross', antiCrossingForce(0.1))
+    .force('antiCross', antiCrossingForce(0.06))
     .force('boundary', boundaryForce);
 
   // Nuclear option: iterative auto-fit scaling
   let lastScale = 1;
   const scaleFloor = 0.55;
   const scaleCeil = 1.05;
-  const scaleStep = 0.03; // adjust per tick
-  const scaleEps = 0.01; // hysteresis to avoid jitter
+  const scaleStep = 0.008; // gentler per-tick scaling
+  const scaleEps = 0.02; // wider hysteresis to avoid jitter
   function fitSceneIfNeeded() {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const n of nodes) {
@@ -1165,7 +1250,10 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
         const statusEl = document.getElementById('status');
         if (statusEl) statusEl.textContent = 'Puzzle solved!';
         const btn = document.getElementById('nextBtn');
-        if (btn) btn.style.visibility = 'visible';
+        const shareBtn = document.getElementById('shareBtn');
+        // If daily cap reached, show Share instead of Next and open share modal
+        const dailyLevelCap = 5;
+        let reachedCap = false;
         // Reveal labels and ensure emoji/text reflects the chosen intersection category
         updateCategoryHighlights();
         // Increment stats immediately upon solve
@@ -1174,13 +1262,64 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
           const s = raw ? JSON.parse(raw) : {};
           const today = (()=>{const d=new Date();return `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`;})();
           if (s.lastDay !== today) { s.today = 0; s.lastDay = today; }
-          s.total = (s.total||0)+1; s.today=(s.today||0)+1; s.best = Math.max(s.best||0, s.today||0);
+          s.total = (s.total||0)+1; s.today=(s.today||0)+1;
+          // perfect day tracking
+          if (s.today === dailyLevelCap) {
+            s.perfectDays = (s.perfectDays||0) + 1;
+            s.streak = (s.streak||0) + 1;
+            s.completedPerfectDay = true;
+            reachedCap = true;
+          }
           s.puzzle = {...(s.puzzle||{}), solved:true};
           localStorage.setItem('nodeword_state_v1', JSON.stringify(s));
           const statTotal = document.getElementById('statTotal'); if (statTotal) statTotal.textContent = String(s.total||0);
-          const statToday = document.getElementById('statToday'); if (statToday) statToday.textContent = String(s.today||0);
-          const statBest = document.getElementById('statBest'); if (statBest) statBest.textContent = String(s.best||0);
+          const statStreak = document.getElementById('statStreak'); if (statStreak) statStreak.textContent = String(s.streak||0);
+          const statPerfectDays = document.getElementById('statPerfectDays'); if (statPerfectDays) statPerfectDays.textContent = String(s.perfectDays||0);
+          // Keep in-memory appState in sync; level stays based on current target until Next is clicked
+          try { appState.total = s.total; appState.today = s.today; appState.streak = s.streak; appState.perfectDays = s.perfectDays; } catch {}
+          const lvlEl = document.getElementById('levelIndicator');
+          if (lvlEl) {
+            const levelFromTarget = Math.min(5, Math.max(1, ((appState.target || 5) - 4)));
+            lvlEl.textContent = `Level ${levelFromTarget}`;
+          }
         } catch {}
+        // Toggle buttons based on daily cap
+        if (btn) btn.style.visibility = reachedCap ? 'hidden' : 'visible';
+        if (shareBtn) shareBtn.style.display = reachedCap ? 'inline-block' : 'none';
+        // If reached cap, open share modal with content
+        if (reachedCap) {
+          try {
+            const today = (()=>{const d=new Date();return `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`;})();
+            // Highlighted word is W1's canonical id
+            const w1 = aliasGraph.nodes.find(n=>n.type==='word' && n.alias==='W1');
+            const highlightedWord = w1 ? w1.id : '';
+            // Collect emojis for all categories in this puzzle (in alias order)
+            const catAliases = aliasGraph.nodes.filter(n=>n.type==='category').map(n=>n.id);
+            const emojis = catAliases.map(c=>categoryEmojis[c]).filter(Boolean).join('');
+            const includeLinkEl = document.getElementById('includeLink');
+            const shareTextEl = document.getElementById('shareText');
+            const shareModal = document.getElementById('shareModal');
+            function buildShare(includeLink) {
+              const base = `Nodeword ${today}\n\n${highlightedWord}\n${emojis}`;
+              return includeLink ? `${base}\nhttps://nodeword.com` : base;
+            }
+            if (shareTextEl && includeLinkEl) {
+              shareTextEl.textContent = buildShare(includeLinkEl.checked);
+              includeLinkEl.onchange = () => {
+                shareTextEl.textContent = buildShare(includeLinkEl.checked);
+              };
+            }
+            const copyBtn = document.getElementById('copyShare');
+            if (copyBtn && shareTextEl) {
+              copyBtn.onclick = async () => {
+                try { await navigator.clipboard.writeText(shareTextEl.textContent || ''); copyBtn.textContent = 'Copied!'; setTimeout(()=>{copyBtn.textContent='Copy';}, 1200);} catch {}
+              };
+            }
+            const closeShare = document.getElementById('closeShare');
+            if (closeShare && shareModal) { closeShare.onclick = ()=>{ shareModal.hidden = true; }; }
+            if (shareModal) shareModal.hidden = false;
+          } catch {}
+        }
       }
     } else {
       console.log('[Nodeword] NOT SOLVED: remaining diamonds', unsolvedCount);
@@ -1206,6 +1345,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const container = document.getElementById('puzzle');
   const nextBtn = document.getElementById('nextBtn');
   const statsBtn = document.getElementById('statsBtn');
+  const shareBtn = document.getElementById('shareBtn');
   const statsModal = document.getElementById('statsModal');
   const closeStats = document.getElementById('closeStats');
   const statTotal = document.getElementById('statTotal');
@@ -1231,17 +1371,23 @@ document.addEventListener("DOMContentLoaded", () => {
   function initState() {
     const today = todayStamp();
     const s = readState();
-    if (!s) return { consent: null, total: 0, today: 0, best: 0, lastDay: today, target: 5, puzzle: null };
-    if (s.lastDay !== today) { s.today = 0; s.lastDay = today; s.target = 5; s.puzzle = null; }
+    if (!s) return { consent: null, total: 0, today: 0, best: 0, lastDay: today, target: 5, puzzle: null, streak: 0, perfectDays: 0 };
+    if (s.lastDay !== today) {
+      // Reset daily counters; keep streak only if yesterday completed all five
+      if (!s.completedPerfectDay) s.streak = 0; // break streak if not perfect yesterday
+      s.completedPerfectDay = false;
+      s.today = 0; s.lastDay = today; s.target = 5; s.puzzle = null;
+    }
     return s;
   }
   let appState = initState();
   function updateStatsUI() {
     if (statTotal) statTotal.textContent = String(appState.total || 0);
-    if (statToday) statToday.textContent = String(appState.today || 0);
-    if (statBest) statBest.textContent = String(appState.best || 0);
+    const statStreak = document.getElementById('statStreak'); if (statStreak) statStreak.textContent = String(appState.streak || 0);
+    const statPerfectDays = document.getElementById('statPerfectDays'); if (statPerfectDays) statPerfectDays.textContent = String(appState.perfectDays || 0);
     const lvlEl = document.getElementById('levelIndicator');
-    if (lvlEl) lvlEl.textContent = `Level ${Math.max(1, (appState.today || 0) + 1)}`;
+    const levelFromTarget = Math.min(5, Math.max(1, ((appState.target || 5) - 4)));
+    if (lvlEl) lvlEl.textContent = `Level ${levelFromTarget}`;
   }
   updateStatsUI();
   function showConsentIfNeeded() { if (consent) consent.hidden = !(appState.consent === null); }
@@ -1252,14 +1398,17 @@ document.addEventListener("DOMContentLoaded", () => {
   function closeStatsModal() { if (statsModal) statsModal.hidden = true; }
   statsBtn?.addEventListener('click', openStats);
   closeStats?.addEventListener('click', closeStatsModal);
+  shareBtn?.addEventListener('click', () => { const m = document.getElementById('shareModal'); if (m) m.hidden = false; });
   // Close stats when clicking backdrop
   statsModal?.addEventListener('click', (e) => { if (e.target === statsModal) closeStatsModal(); });
   // Ensure stats modal starts hidden
   if (statsModal) statsModal.hidden = true;
 
-  // Progressive puzzle size: start at 5, increase to max 12 after each solve (persisted)
+  // Daily cap: allow up to 5 levels per day; deterministic per day+level
+  // Progressive puzzle size still scales up to 12, but only first 5 are playable per day
   let currentTargetWords = appState.target || 5;
   const maxTargetWords = 12;
+  const dailyLevelCap = 5;
 
   let wordData = null;
 
@@ -1270,6 +1419,12 @@ document.addEventListener("DOMContentLoaded", () => {
     if (nextBtn) nextBtn.style.visibility = 'hidden';
     const statusEl = document.getElementById('status');
     if (statusEl) statusEl.textContent = '';
+    // Ensure level indicator reflects current target-based level immediately
+    try {
+      const lvlToday = Math.min(5, Math.max(1, ((appState.target || 5) - 4)));
+      const lvlEl = document.getElementById('levelIndicator');
+      if (lvlEl) lvlEl.textContent = `Level ${lvlToday}`;
+    } catch {}
     try {
       if (!wordData) wordData = await fetchWordData();
       const cfg = NODEWORD_CONFIG;
@@ -1365,8 +1520,12 @@ document.addEventListener("DOMContentLoaded", () => {
       if (savedValid) {
         graph = appState.puzzle.graph;
       } else {
-        console.log('[Nodeword] Generating graph with constraints…', { ...cfg, targetWords: target });
-        graph = await generateGraphWithRetries(target);
+        // Deterministic seed by day + level (attempt count provides fallbacks)
+        const today = todayStamp();
+        // Derive level from target words to keep consistent with word count
+        const levelToday = Math.min(5, Math.max(1, (target - 4)));
+        console.log('[Nodeword] Generating graph with constraints…', { ...cfg, targetWords: target, seed: `${today}-L${levelToday}` });
+        graph = await withSeed(`${today}-L${levelToday}`, async () => generateGraphWithRetries(target));
         if (appState.puzzle) { appState.puzzle = null; writeState(appState); }
         if (!graph) {
           // Give up gracefully: inform and try again with a fresh state
@@ -1400,6 +1559,9 @@ document.addEventListener("DOMContentLoaded", () => {
           writeState(appState);
         }
       };
+      // Pass level meta to renderer for W1 highlight
+      const levelToday = Math.min(5, Math.max(1, (target - 4)));
+      persist.meta = { levelToday };
       renderForceGraph(container, aliasGraph, wordData, catEmojis, persist);
       console.log('[Nodeword] Graph rendered to SVG');
     } catch (err) {
@@ -1410,12 +1572,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
   nextBtn?.addEventListener('click', () => {
     console.log('[Nodeword] Next puzzle clicked');
-    // Stats increment on solve, and increase target words up to max, then re-generate
-    appState.total = (appState.total || 0) + 1;
-    appState.today = (appState.today || 0) + 1;
-    appState.best = Math.max(appState.best || 0, appState.today || 0);
-    writeState(appState);
-    updateStatsUI();
+    // Enforce daily cap: allow only 5 solves per day
+    if ((appState.today || 0) >= dailyLevelCap) {
+      const statusEl = document.getElementById('status');
+      if (statusEl) statusEl.textContent = 'Come back tomorrow for more Nodeword!';
+      nextBtn.style.visibility = 'hidden';
+      return;
+    }
+    // Stats increment on solve happens at solve time; advance difficulty and regenerate
     currentTargetWords = Math.min((appState.target || currentTargetWords) + 1, maxTargetWords);
     appState.target = currentTargetWords;
     // Clear current puzzle restore state for next puzzle

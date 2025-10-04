@@ -252,6 +252,24 @@ a:hover {
   stroke-width: 2px;
 }
 
+.word-circle.highlighted circle {
+  fill: #00e5ff; /* light cyan bubble variant */
+  stroke: #4e3aa9;
+}
+.word-circle.highlighted text {
+  fill: #0b0e1a; /* invert to dark text for contrast */
+}
+
+.share-preview {
+  white-space: pre-wrap;
+  background: #0f1220;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  padding: 10px;
+  color: var(--text);
+  max-width: 80vw;
+}
+
 .word-circle {
   pointer-events: all;
   cursor: pointer;
