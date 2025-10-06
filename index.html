@@ -25,6 +25,7 @@
       <div id="levelIndicator" class="level" aria-live="polite"></div>
       <div class="actions">
         <button class="primary" id="nextBtn">Next puzzle</button>
+        <button class="primary" id="shareBtn" style="display: none;">Share</button>
         <button class="primary" id="statsBtn" style="position: fixed; top: 12px; right: 12px; z-index: 10;">Info</button>
       </div>
       <section id="puzzle" aria-live="polite"></section>
@@ -71,6 +72,21 @@
           </section>
           <div class="modal-actions">
             <button class="primary" id="closeStats">Close</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="shareModal" class="modal" role="dialog" aria-modal="true" hidden>
+        <div class="modal-card">
+          <h3>Share</h3>
+          <pre id="shareText" class="share-preview" aria-live="polite"></pre>
+          <label style="display: flex; align-items: center; gap: 8px; margin-top: 8px;">
+            <input type="checkbox" id="includeLink" checked>
+            Include link to nodeword.com
+          </label>
+          <div class="modal-actions">
+            <button class="primary" id="copyShare">Copy to clipboard</button>
+            <button id="closeShare">Close</button>
           </div>
         </div>
       </div>

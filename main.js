@@ -38,11 +38,18 @@ function makeRng(seedString) {
 }
 function withSeed(seedString, fn) {
   const prev = CURRENT_RNG;
+  let result;
+  CURRENT_RNG = makeRng(seedString);
   try {
-    CURRENT_RNG = makeRng(seedString);
-    return fn();
+    result = fn();
+    if (result && typeof result.then === 'function') {
+      // Async: restore RNG after the promise settles
+      return result.finally(() => { CURRENT_RNG = prev; });
+    }
+    return result;
   } finally {
-    CURRENT_RNG = prev;
+    // Sync: restore immediately; for async, finally runs now but we guard above
+    if (!result || typeof result.then !== 'function') CURRENT_RNG = prev;
   }
 }
 
@@ -343,7 +350,7 @@ function generatePuzzleGraph(wordToCategories, targetWordCount = 12, maxDegree =
         // If none found, fall back to normal growth below
       }
 
-      const pickExistingWord = Math.random() < 0.5 || wordSet.size === 1;
+      const pickExistingWord = (CURRENT_RNG.random() < 0.5) || wordSet.size === 1;
       const anchorWord = pickExistingWord ? choice(Array.from(wordSet)) : choice(allWords);
       const availableCategories = (wordToCategories[anchorWord] || []).slice();
       if (availableCategories.length === 0) break;
@@ -701,19 +708,21 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
   // Make categories draggable via base nodes; words are dragged via overlay to avoid double-drag
   const dragBehavior = d3.drag()
     .on('start', (event, d) => {
-      if (!event.active) simulation.alphaTarget(0.03).restart();
+      if (!event.active) simulation.alphaTarget(BACKGROUND_ALPHA).restart();
       d.fx = d.x; d.fy = d.y;
     })
     .on('drag', (event, d) => {
       d.fx = event.x; d.fy = event.y;
     })
     .on('end', (event, d) => {
-      if (!event.active) simulation.alphaTarget(0);
       d.fx = null; d.fy = null;
+      if (!event.active) simulation.alphaTarget(BACKGROUND_ALPHA);
     });
 
   // Drag only category base nodes; words are dragged via overlay to avoid double-drag
   catNodes.call(dragBehavior);
+  // Save assignment on diamond drag end as well
+  catNodes.on('end.save', function() { try { snapshotAssignmentOnly(); } catch {} });
 
   const radius = d => d.type === 'category' ? 16 : 12;
 
@@ -908,6 +917,24 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
   wordCircleG.append('circle')
     .attr('r', d => (circleMetrics.get(d.alias)?.radius || 24));
 
+  // Apply immediate highlight before any interactions
+  try {
+    const isFinalLevelInit = Boolean(persist && persist.meta && persist.meta.levelToday === 5);
+    if (isFinalLevelInit) {
+      const firstWordInit = aliasGraph.nodes.filter(n=>n.type==='word')[0]?.id;
+      if (firstWordInit) {
+        let targetAliasInit = null;
+        // assignment may not yet match nodeAliasToWord; build a temp map from initial assignment
+        const initialMap = new Map(assignment);
+        initialMap.forEach((w, alias) => { if (w === firstWordInit) targetAliasInit = alias; });
+        if (targetAliasInit) {
+          wordCircleG.classed('highlighted', false);
+          wordCircleG.filter(d => d.alias === targetAliasInit).classed('highlighted', true);
+        }
+      }
+    }
+  } catch {}
+
   wordCircleG.each(function(d) {
     const g = d3.select(this);
     const w = assignment.get(d.alias);
@@ -920,11 +947,19 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     }
   });
 
-  // Highlight first index word circle (W1) on final daily level (5)
+  // Highlight the word circle that currently holds the first puzzle word on final daily level (5)
   try {
     const isFinalLevel = Boolean(persist && persist.meta && persist.meta.levelToday === 5);
     if (isFinalLevel) {
-      wordCircleG.filter(d => d.alias === 'W1').classed('highlighted', true);
+      const firstWord = aliasGraph.nodes.filter(n=>n.type==='word')[0]?.id;
+      if (firstWord) {
+        let targetAlias = null;
+        nodeAliasToWord.forEach((w, alias) => { if (w === firstWord) targetAlias = alias; });
+        if (targetAlias) {
+          wordCircleG.classed('highlighted', false);
+          wordCircleG.filter(d => d.alias === targetAlias).classed('highlighted', true);
+        }
+      }
     }
   } catch {}
 
@@ -942,29 +977,45 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
       .attr('transform', `translate(${x},${y})`);
   }
 
-  // Make word circles draggable (overlay), mirroring node drag for diamonds
-  const dragWordOverlay = d3.drag()
+  // Make word circles draggable (overlay), with a small movement threshold so taps/clicks reliably select
+  const DRAG_THRESHOLD = 8; // pixels
+  const dragWordOverlay = d3.drag().clickDistance(DRAG_THRESHOLD)
     .on('start', function(event, d) {
-      if (!event.active) simulation.alphaTarget(0.03).restart();
-      // Select on drag start so drag also selects
-      if (!solved) {
-        if (!selected || selected.alias !== d.alias) {
-          selected = d;
-          wordCircleG.classed('selected', false);
-          d3.select(this).classed('selected', true);
-        }
+      d._dragStartX = event.x;
+      d._dragStartY = event.y;
+      d._didDrag = false;
+      // If nothing is selected yet, dragging can select this circle; otherwise keep current selection for swap
+      if (!solved && !selected) {
+        selected = d;
+        wordCircleG.classed('selected', false);
+        d3.select(this).classed('selected', true);
       }
-      // Avoid stealing focus on simple clicks: only set fx/fy if movement starts
     })
     .on('drag', function(event, d) {
-      if (d.fx == null || d.fy == null) { d.fx = d.x; d.fy = d.y; }
+      if (!d._didDrag) {
+        const dx = (event.x - (d._dragStartX ?? event.x));
+        const dy = (event.y - (d._dragStartY ?? event.y));
+        if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return; // still a click, don't start dragging yet
+        d._didDrag = true;
+        if (!event.active) simulation.alphaTarget(BACKGROUND_ALPHA).restart();
+        d.fx = d.x; d.fy = d.y;
+      }
       d.fx = event.x; d.fy = event.y;
     })
     .on('end', function(event, d) {
-      if (!event.active) simulation.alphaTarget(0);
-      d.fx = null; d.fy = null;
+      if (d._didDrag) {
+        d.fx = null; d.fy = null;
+        if (!event.active) simulation.alphaTarget(BACKGROUND_ALPHA);
+        // Prevent the subsequent click only if an actual drag occurred
+        try { event.sourceEvent && event.sourceEvent.preventDefault && event.sourceEvent.preventDefault(); } catch {}
+        snapshotAssignmentOnly();
+      }
+      d._dragStartX = d._dragStartY = undefined;
+      d._didDrag = false;
     });
   wordCircleG.call(dragWordOverlay);
+  // Ensure text inside circles doesn't intercept pointer events
+  try { wordCircleG.selectAll('text').attr('pointer-events', 'none'); } catch {}
 
   // Maintain mapping from node alias to assigned word
   const nodeAliasToWord = new Map(assignment);
@@ -1018,6 +1069,96 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     return chosen;
   }
 
+  // Helper: build and open the Share modal with current data; also log solve order
+  function openShareModalWithData() {
+    try {
+      console.log('[Nodeword] Opening share modal (helper)');
+      // Show modal immediately; then populate
+      const shareModal = document.getElementById('shareModal');
+      if (!shareModal) { console.warn('[Nodeword] Share modal element not found'); return; }
+      shareModal.hidden = false; console.log('[Nodeword] Share modal shown');
+      const dNow = new Date();
+      const today = `${dNow.getFullYear()}-${String(dNow.getMonth()+1).padStart(2,'0')}-${String(dNow.getDate()).padStart(2,'0')}`;
+      // Highlighted word is W1's canonical id
+      const w1 = aliasGraph.nodes.find(n=>n.type==='word' && n.alias==='W1');
+      const highlightedWord = w1 ? w1.id : '';
+      // Persist this level emoji order if missing and build chain
+      try {
+        const raw = localStorage.getItem('nodeword_state_v1');
+        let s = {};
+        try { s = raw ? JSON.parse(raw) : {}; console.log('[Nodeword] Share state loaded'); } catch (e) { console.warn('[Nodeword] Bad saved state JSON; ignoring'); s = {}; }
+        if (!s.dailyEmojis) s.dailyEmojis = {};
+        const level = Math.min(5, Math.max(1, Number(persist && persist.meta && persist.meta.levelToday || 1)));
+        const levelKey = 'L' + level;
+        if (Array.isArray(solveOrderEmojis) && solveOrderEmojis.length && (!Array.isArray(s.dailyEmojis[levelKey]) || s.dailyEmojis[levelKey].length === 0)) {
+          s.dailyEmojis[levelKey] = solveOrderEmojis.slice();
+          try { s.version = STORAGE_VERSION; } catch {}
+          // Preserve existing dailyEmojis via writeState merge to avoid wiping nuclear-saved chains
+          writeState(s);
+          // Mirror dailyEmojis into in-memory state so later writes (e.g., Next) don't wipe them
+          try { appState.dailyEmojis = s.dailyEmojis; } catch {}
+        }
+        // Build chain from dailyEmojis; fallback to saved puzzle's solveOrder (by cats → emojis) if empty on L5
+        const parts = [];
+        for (let i = 1; i <= 5; i++) {
+          const arr = s.dailyEmojis['L' + i];
+          if (Array.isArray(arr) && arr.length) parts.push(arr.join(''));
+        }
+        let chain = parts.join('→');
+        if (!chain && level === 5) {
+          try {
+            const saved = (typeof appState === 'object' && appState.puzzle) ? appState.puzzle : null;
+            if (saved) {
+              if (Array.isArray(saved.solveOrderCats) && saved.solveOrderCats.length) {
+                // Map category aliases to emojis
+                const aliasToEmoji = new Map();
+                for (const node of aliasGraph.nodes) {
+                  if (node.type === 'category') aliasToEmoji.set(node.id, categoryEmojis[node.id] || '');
+                }
+                const ems = saved.solveOrderCats.map(ca => aliasToEmoji.get(ca) || '').filter(Boolean);
+                if (ems.length) chain = ems.join('');
+              }
+              if (!chain && Array.isArray(saved.solveOrderEmojis) && saved.solveOrderEmojis.length) {
+                chain = saved.solveOrderEmojis.join('');
+              }
+            }
+          } catch {}
+        }
+        if (!chain && Array.isArray(solveOrderEmojis) && solveOrderEmojis.length) {
+          chain = solveOrderEmojis.join('');
+        }
+        console.log('[Nodeword] Share chain', { chain: chain || '(empty)', L1: s.dailyEmojis.L1||[], L2: s.dailyEmojis.L2||[], L3: s.dailyEmojis.L3||[], L4: s.dailyEmojis.L4||[], L5: s.dailyEmojis.L5||[] });
+        const includeLinkEl = document.getElementById('includeLink');
+        const shareTextEl = document.getElementById('shareText');
+        console.log('[Nodeword] Share DOM presence', { shareText: !!shareTextEl, includeLink: !!includeLinkEl });
+        function buildShare(includeLink) {
+          const base = `Nodeword ${today}: "${highlightedWord}"\n\n${chain}\n`;
+          return includeLink ? `${base}\nhttps://nodeword.com` : base;
+        }
+        try {
+          if (shareTextEl) { shareTextEl.textContent = buildShare(includeLinkEl ? includeLinkEl.checked : true); console.log('[Nodeword] Share text populated', shareTextEl.textContent); }
+          if (includeLinkEl) includeLinkEl.onchange = () => { if (shareTextEl) shareTextEl.textContent = buildShare(includeLinkEl.checked); };
+          if (!shareTextEl) console.warn('[Nodeword] shareText element missing');
+        } catch (e) { console.warn('[Nodeword] Error wiring share text', e); }
+        const copyBtn = document.getElementById('copyShare');
+        if (copyBtn) {
+          copyBtn.onclick = async () => {
+            try { await navigator.clipboard.writeText((shareTextEl && shareTextEl.textContent) || ''); copyBtn.textContent = 'Copied!'; setTimeout(()=>{copyBtn.textContent='Copy';}, 1200);} catch {}
+          };
+        }
+        const closeShare = document.getElementById('closeShare');
+        if (closeShare) { closeShare.onclick = ()=>{ shareModal.hidden = true; }; }
+      } catch (e) { console.warn('[Nodeword] Share modal population failed', e); }
+    } catch {}
+  }
+  try { window.__nodewordOpenShare = openShareModalWithData; } catch {}
+
+  // Track per-puzzle category solve order (by first time a category becomes valid)
+  const solvedCatAliases = new Set();
+  // Prefer restoring category aliases; fallback to legacy emojis (will be mapped later if needed)
+  let solveOrderCatAliases = (persist && persist.restore && Array.isArray(persist.restore.solveOrderCats)) ? persist.restore.solveOrderCats.slice() : [];
+  let solveOrderEmojis = (persist && persist.restore && Array.isArray(persist.restore.solveOrderEmojis)) ? persist.restore.solveOrderEmojis.slice() : [];
+
   function updateCategoryHighlights() {
     for (const [catAlias, catSel] of categoryNodeByAlias.entries()) {
       const common = commonCategoryForAlias(catAlias);
@@ -1031,13 +1172,27 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
       labelSel.text(highlight && solved ? (common || '') : '');
       const lines = linksByCategory.get(catAlias) || [];
       for (const ln of lines) ln.classed('highlight', highlight);
+
+      // Record first-time solve order for this category (by alias, not emoji)
+      if (highlight && !solvedCatAliases.has(catAlias)) {
+        solvedCatAliases.add(catAlias);
+        solveOrderCatAliases.push(catAlias);
+        // Maintain legacy emoji list for backward compatibility if desired
+        if (emojiChar) solveOrderEmojis.push(emojiChar); else solveOrderEmojis.push('✅');
+        if (persist && typeof persist.save === 'function') {
+          try {
+            console.log('[Nodeword] solveOrder updated', { cats: solveOrderCatAliases, emojis: solveOrderEmojis });
+            persist.save({ solveOrderCats: solveOrderCatAliases, solveOrderEmojis });
+          } catch {}
+        }
+      }
     }
   }
 
   wordCircleG.on('click', function(event, d) {
     event.stopPropagation();
-    // If a drag started (fx/fy set), treat this as drag-end not click-select
-    if (d.fx != null || d.fy != null) return;
+    // If this click follows a drag, ignore to prevent select-then-deselect flicker
+    if (event.defaultPrevented) return;
     const me = d3.select(this);
     if (!selected) {
       selected = d;
@@ -1045,7 +1200,7 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
       return;
     }
     if (selected && selected.alias === d.alias) {
-      deselect();
+      // Keep it selected; do not toggle off on second click
       return;
     }
     // Swap words between selected node and current node
@@ -1085,7 +1240,23 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
 
     // Visual: selected state cleared, and ensure both circles fly to their node positions on next tick
     deselect();
+    // Update highlighted word to follow the first puzzle word on final level
+    try {
+      const isFinalLevel = Boolean(persist && persist.meta && persist.meta.levelToday === 5);
+      if (isFinalLevel) {
+        const firstWord = aliasGraph.nodes.filter(n=>n.type==='word')[0]?.id;
+        if (firstWord) {
+          let targetAlias = null;
+          nodeAliasToWord.forEach((w, alias) => { if (w === firstWord) targetAlias = alias; });
+          if (targetAlias) {
+            wordCircleG.classed('highlighted', false);
+            wordCircleG.filter(d => d.alias === targetAlias).classed('highlighted', true);
+          }
+        }
+      }
+    } catch {}
     updateCategoryHighlights();
+    snapshotAssignmentOnly();
     checkForSolved();
   });
 
@@ -1097,17 +1268,30 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
   svg.on('click', () => { if (!solved) deselect(); });
   // Initial check
   updateCategoryHighlights();
-  if (solved) {
+    if (solved) {
     setInteractivity(false);
     const statusEl = document.getElementById('status');
     if (statusEl) statusEl.textContent = 'Puzzle solved!';
     const btn = document.getElementById('nextBtn');
-    if (btn) btn.style.visibility = 'visible';
+    const shareBtn = document.getElementById('shareBtn');
+    // Determine final level (5) using meta passed from caller
+    const levelFromTarget = Math.max(1, Number(persist && persist.meta && persist.meta.levelToday || 1));
+    const isFinalLevel = levelFromTarget >= 5;
+    console.log('[Nodeword] Solved (initial). level=', levelFromTarget, 'final=', isFinalLevel);
+      if (isFinalLevel) {
+      console.log('[Nodeword] Trigger share modal (initial solved)');
+      if (btn) btn.style.display = 'none';
+      if (shareBtn) shareBtn.style.display = 'inline-block';
+      openShareModalWithData();
+    } else {
+      console.log('[Nodeword] Non-final level on initial solved; showing Next');
+      if (btn) btn.style.display = 'inline-block';
+    }
   } else {
     checkForSolved();
   }
 
-  const computePadding = () => Math.max(24, Math.round(Math.min(width, height) * 0.06));
+  const computePadding = () => Math.max(8, Math.round(Math.min(width, height) * 0.03));
   let basePadding = computePadding();
   const boundaryK = 0.06; // gentler boundary pushback
 
@@ -1139,6 +1323,10 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     .force('catCentroid', categoryCentroidForce(0.03))
     .force('antiCross', antiCrossingForce(0.06))
     .force('boundary', boundaryForce);
+
+  // Keep a gentle background tick so forces continue to act
+  const BACKGROUND_ALPHA = 0.02;
+  simulation.alphaTarget(BACKGROUND_ALPHA);
 
   // Nuclear option: iterative auto-fit scaling
   let lastScale = 1;
@@ -1174,7 +1362,8 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
     if (Math.abs(next - lastScale) > 1e-3 || lastScale !== 1) {
       const cx = (minX + maxX) / 2;
       const cy = (minY + maxY) / 2;
-      scene.attr('transform', `translate(${width / 2},${height / 2}) scale(${next}) translate(${-cx},${-cy})`);
+      // Bias scene slightly left by 4px to compensate for subpixel rounding on narrow screens
+      scene.attr('transform', `translate(${width / 2 - 4},${height / 2}) scale(${next}) translate(${-cx},${-cy})`);
       lastScale = next;
     }
   }
@@ -1182,6 +1371,15 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
   let firstTickLogged = false;
   simulation.alpha(0); // start paused to let KK seed positions be visible
   setTimeout(() => simulation.alpha(0.4).restart(), 120); // then relax
+  // Remove periodic snapshots; we'll persist on explicit events only
+  function snapshotAssignmentOnly() {
+    try {
+      if (!persist || typeof persist.save !== 'function') return;
+      const asn = {}; nodeAliasToWord.forEach((v,k)=>asn[k]=v);
+      persist.save({ assignment: asn });
+    } catch {}
+  }
+
   simulation.on('tick', () => {
     link
       .attr('x1', d => d.source.x)
@@ -1251,6 +1449,11 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
         if (statusEl) statusEl.textContent = 'Puzzle solved!';
         const btn = document.getElementById('nextBtn');
         const shareBtn = document.getElementById('shareBtn');
+        // Mark solved via persistence adapter for unified state flow
+        try {
+          if (persist && typeof persist.save === 'function')
+            persist.save({ solved: true, solveOrderCats: (solveOrderCatAliases||[]).slice() });
+        } catch {}
         // If daily cap reached, show Share instead of Next and open share modal
         const dailyLevelCap = 5;
         let reachedCap = false;
@@ -1270,8 +1473,68 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
             s.completedPerfectDay = true;
             reachedCap = true;
           }
-          s.puzzle = {...(s.puzzle||{}), solved:true};
-          localStorage.setItem('nodeword_state_v1', JSON.stringify(s));
+          // Ensure puzzle snapshot exists even if earlier saves were gated by consent
+          try {
+            const allowPersist = (typeof appState === 'object') ? (appState.consent !== false) : true;
+            if (allowPersist) {
+              const wordsList = aliasGraph.nodes.filter(n=>n.type==='word').map(n=>n.id);
+              const catList = aliasGraph.nodes.filter(n=>n.type==='category').map(n=>n.id);
+              // Map alias->id for words and categories
+              const aliasToId = new Map(aliasGraph.nodes.map(n=>[n.alias, n.id]));
+              const edgesList = aliasGraph.links.map(l=>({
+                word: aliasToId.get(typeof l.source==='string'? l.source : l.source.alias),
+                category: aliasToId.get(typeof l.target==='string'? l.target : l.target.alias)
+              })).filter(e=>e.word && e.category);
+              const snapshot = { target: Math.min(Math.max(5, currentTargetWords), maxTargetWords), graph: { words: wordsList, categories: catList, edges: edgesList } };
+              const asnObj = {}; nodeAliasToWord.forEach((v,k)=>asnObj[k]=v);
+              // Persist per-level solve order by category aliases and mapped emojis into puzzle snapshot
+              const aliasToEmoji = new Map();
+              for (const node of aliasGraph.nodes) if (node.type==='category') aliasToEmoji.set(node.alias, categoryEmojis[node.id]||'');
+              const thisLevelCats = (solveOrderCatAliases||[]).slice();
+              const thisLevelEmojis = thisLevelCats.map(ca=>aliasToEmoji.get(ca)||'').filter(Boolean);
+              s.puzzle = { ...(s.puzzle||{}), ...snapshot, assignment: asnObj, solved:true, solveOrderCats: thisLevelCats, solveOrderEmojis: thisLevelEmojis };
+              try {
+                console.log('[Nodeword] Saving solved state to storage', {
+                  target: snapshot.target,
+                  words: snapshot.graph.words.length,
+                  categories: snapshot.graph.categories.length,
+                  edges: snapshot.graph.edges.length
+                });
+              } catch {}
+            }
+          } catch {}
+          // Nuclear option: Always persist dailyEmojis for this level outside consent gate using a deep-clone write
+          try {
+            const aliasToEmoji2 = new Map();
+            for (const node of aliasGraph.nodes) if (node.type==='category') aliasToEmoji2.set(node.alias, categoryEmojis[node.id]||'');
+            const catsNow = (solveOrderCatAliases||[]).slice();
+            const emsNow = catsNow.map(ca=>aliasToEmoji2.get(ca)||'').filter(Boolean);
+            // Derive level from current graph word count to avoid relying on outer variables
+            const wordsCountNow = aliasGraph.nodes.filter(n=>n.type==='word').length;
+            const levelTodayNow = Math.min(5, Math.max(1, (wordsCountNow - 4)));
+            const prevRaw = localStorage.getItem('nodeword_state_v1');
+            const prev = prevRaw ? JSON.parse(prevRaw) : {};
+            if (!prev.dailyEmojis) prev.dailyEmojis = {};
+            prev.dailyEmojis['L'+levelTodayNow] = (emsNow || []).slice();
+            // Deep-clone snapshot to avoid pointer aliasing
+            localStorage.setItem('nodeword_state_v1', JSON.stringify(JSON.parse(JSON.stringify(prev))));
+            console.log('[Nodeword] Nuclear save: dailyEmojis updated', { level: levelTodayNow, emojis: prev.dailyEmojis['L'+levelTodayNow], cats: catsNow });
+          } catch (e) { console.warn('[Nodeword] Nuclear save failed', e); }
+          try { s.version = STORAGE_VERSION; } catch {}
+          writeState(s);
+          try { logDailyDebug('post-solve'); } catch {}
+          // Keep in-memory state aligned so later persistence (e.g., node position snapshots) does not overwrite solved flag
+          try {
+            appState.puzzle = { ...(appState.puzzle||{}), ...snapshot, assignment: asnObj, solved: true };
+            appState.target = snapshot.target;
+            // Persist updated appState (including mirrored dailyEmojis)
+            writeState(appState);
+            console.log('[Nodeword] In-memory state updated to solved for current target', {
+              target: appState.target,
+              hasAssignment: !!appState.puzzle.assignment,
+              solved: !!appState.puzzle.solved
+            });
+          } catch {}
           const statTotal = document.getElementById('statTotal'); if (statTotal) statTotal.textContent = String(s.total||0);
           const statStreak = document.getElementById('statStreak'); if (statStreak) statStreak.textContent = String(s.streak||0);
           const statPerfectDays = document.getElementById('statPerfectDays'); if (statPerfectDays) statPerfectDays.textContent = String(s.perfectDays||0);
@@ -1283,42 +1546,17 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
             lvlEl.textContent = `Level ${levelFromTarget}`;
           }
         } catch {}
-        // Toggle buttons based on daily cap
-        if (btn) btn.style.visibility = reachedCap ? 'hidden' : 'visible';
-        if (shareBtn) shareBtn.style.display = reachedCap ? 'inline-block' : 'none';
-        // If reached cap, open share modal with content
-        if (reachedCap) {
-          try {
-            const today = (()=>{const d=new Date();return `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`;})();
-            // Highlighted word is W1's canonical id
-            const w1 = aliasGraph.nodes.find(n=>n.type==='word' && n.alias==='W1');
-            const highlightedWord = w1 ? w1.id : '';
-            // Collect emojis for all categories in this puzzle (in alias order)
-            const catAliases = aliasGraph.nodes.filter(n=>n.type==='category').map(n=>n.id);
-            const emojis = catAliases.map(c=>categoryEmojis[c]).filter(Boolean).join('');
-            const includeLinkEl = document.getElementById('includeLink');
-            const shareTextEl = document.getElementById('shareText');
-            const shareModal = document.getElementById('shareModal');
-            function buildShare(includeLink) {
-              const base = `Nodeword ${today}\n\n${highlightedWord}\n${emojis}`;
-              return includeLink ? `${base}\nhttps://nodeword.com` : base;
-            }
-            if (shareTextEl && includeLinkEl) {
-              shareTextEl.textContent = buildShare(includeLinkEl.checked);
-              includeLinkEl.onchange = () => {
-                shareTextEl.textContent = buildShare(includeLinkEl.checked);
-              };
-            }
-            const copyBtn = document.getElementById('copyShare');
-            if (copyBtn && shareTextEl) {
-              copyBtn.onclick = async () => {
-                try { await navigator.clipboard.writeText(shareTextEl.textContent || ''); copyBtn.textContent = 'Copied!'; setTimeout(()=>{copyBtn.textContent='Copy';}, 1200);} catch {}
-              };
-            }
-            const closeShare = document.getElementById('closeShare');
-            if (closeShare && shareModal) { closeShare.onclick = ()=>{ shareModal.hidden = true; }; }
-            if (shareModal) shareModal.hidden = false;
-          } catch {}
+        // Determine level from target words (final level is 5)
+        const levelFromTarget = Math.min(5, Math.max(1, Number(persist && persist.meta && persist.meta.levelToday || 1)));
+        const isFinalLevel = levelFromTarget === 5;
+        console.log('[Nodeword] SOLVED handler. level=', levelFromTarget, 'final=', isFinalLevel);
+        // Toggle buttons based on final level
+        if (btn) btn.style.display = isFinalLevel ? 'none' : 'inline-block';
+        if (shareBtn) shareBtn.style.display = isFinalLevel ? 'inline-block' : 'none';
+        // If final level, open share modal with centralized helper
+        if (isFinalLevel) {
+          console.log('[Nodeword] Triggering share modal (solve)');
+          openShareModalWithData();
         }
       }
     } else {
@@ -1356,31 +1594,131 @@ document.addEventListener("DOMContentLoaded", () => {
   const declineConsent = document.getElementById('declineConsent');
   // Persistence helpers and stats
   const STORAGE_KEY = 'nodeword_state_v1';
+  const STORAGE_VERSION = 2;
   function readState() {
     try { const raw = localStorage.getItem(STORAGE_KEY); return raw ? JSON.parse(raw) : null; } catch { return null; }
   }
   function canPersist() { return appState && appState.consent === true; }
   function writeState(s) {
     if (!canPersist()) return;
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); } catch {}
+    try {
+      // Preserve/merge previously saved dailyEmojis if caller didn't include them or provided empties
+      try {
+        const prevRaw = localStorage.getItem(STORAGE_KEY);
+        const prev = prevRaw ? JSON.parse(prevRaw) : null;
+        if (prev && prev.dailyEmojis) {
+          if (!s.dailyEmojis) s.dailyEmojis = {};
+          const keys = ['L1','L2','L3','L4','L5'];
+          for (const k of keys) {
+            const cur = s.dailyEmojis[k];
+            const old = prev.dailyEmojis[k];
+            if (!Array.isArray(cur) || cur.length === 0) {
+              if (Array.isArray(old) && old.length > 0) s.dailyEmojis[k] = old.slice();
+            }
+          }
+        }
+      } catch {}
+      s.version = STORAGE_VERSION;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+      try {
+        const dbg = (s && s.dailyEmojis) ? { L1: s.dailyEmojis.L1||[], L2: s.dailyEmojis.L2||[], L3: s.dailyEmojis.L3||[], L4: s.dailyEmojis.L4||[], L5: s.dailyEmojis.L5||[] } : null;
+        console.log('[Nodeword] writeState saved dailyEmojis', dbg);
+      } catch {}
+    } catch {}
   }
+  function pad2(n){ return String(n).padStart(2,'0'); }
   function todayStamp() {
     const d = new Date();
-    return `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`;
+    return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
   }
   function initState() {
     const today = todayStamp();
     const s = readState();
-    if (!s) return { consent: null, total: 0, today: 0, best: 0, lastDay: today, target: 5, puzzle: null, streak: 0, perfectDays: 0 };
+    if (!s) return { version: STORAGE_VERSION, consent: null, total: 0, today: 0, best: 0, lastDay: today, target: 5, puzzle: null, streak: 0, perfectDays: 0, dailyEmojis: {} };
+    // Migration: if missing/older version or clearly invalid shape, wipe state
+    try {
+      const invalid = (
+        !('version' in s) || (typeof s.version !== 'number') || s.version < STORAGE_VERSION ||
+        (s.puzzle && (!s.puzzle.graph || !Array.isArray(s.puzzle.graph?.words) || !Array.isArray(s.puzzle.graph?.categories)))
+      );
+      if (invalid) {
+        try { localStorage.removeItem(STORAGE_KEY); } catch {}
+        return { version: STORAGE_VERSION, consent: null, total: 0, today: 0, best: 0, lastDay: today, target: 5, puzzle: null, streak: 0, perfectDays: 0, dailyEmojis: {} };
+      }
+    } catch {}
     if (s.lastDay !== today) {
       // Reset daily counters; keep streak only if yesterday completed all five
       if (!s.completedPerfectDay) s.streak = 0; // break streak if not perfect yesterday
       s.completedPerfectDay = false;
-      s.today = 0; s.lastDay = today; s.target = 5; s.puzzle = null;
+      s.today = 0; s.lastDay = today; s.target = 5; s.puzzle = null; s.dailyEmojis = {};
     }
+    // Ensure version field is stamped going forward
+    if (s.version !== STORAGE_VERSION) s.version = STORAGE_VERSION;
     return s;
   }
   let appState = initState();
+  function logDailyDebug(tag) {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      const s = raw ? JSON.parse(raw) : null;
+      if (s && s.dailyEmojis) {
+        const arrays = { L1: s.dailyEmojis.L1||[], L2: s.dailyEmojis.L2||[], L3: s.dailyEmojis.L3||[], L4: s.dailyEmojis.L4||[], L5: s.dailyEmojis.L5||[] };
+        const chains = {
+          L1: Array.isArray(arrays.L1) ? arrays.L1.join('') : '',
+          L2: Array.isArray(arrays.L2) ? arrays.L2.join('') : '',
+          L3: Array.isArray(arrays.L3) ? arrays.L3.join('') : '',
+          L4: Array.isArray(arrays.L4) ? arrays.L4.join('') : '',
+          L5: Array.isArray(arrays.L5) ? arrays.L5.join('') : ''
+        };
+        console.log(`[Nodeword] Daily emoji arrays ${tag? '('+tag+')':''}`, arrays);
+        console.log(`[Nodeword] Daily emoji chains ${tag? '('+tag+')':''}`, chains);
+      } else {
+        console.log('[Nodeword] No dailyEmojis found in storage', { tag });
+      }
+    } catch (e) { console.warn('[Nodeword] logDailyDebug failed', e); }
+  }
+  try {
+    console.log('[Nodeword] appState initialized', {
+      target: appState.target,
+      today: appState.today,
+      total: appState.total,
+      consent: appState.consent,
+      puzzle: appState.puzzle ? { solved: !!appState.puzzle.solved, target: appState.puzzle.target } : null
+    });
+    // Log any saved daily emoji chains and saved solveOrderEmojis for debugging
+    try {
+      const rawDbg = localStorage.getItem(STORAGE_KEY);
+      let sDbg = null;
+      try { sDbg = rawDbg ? JSON.parse(rawDbg) : null; } catch {}
+      if (sDbg && sDbg.dailyEmojis) {
+        console.log('[Nodeword] Daily emoji arrays', {
+          L1: sDbg.dailyEmojis.L1 || [],
+          L2: sDbg.dailyEmojis.L2 || [],
+          L3: sDbg.dailyEmojis.L3 || [],
+          L4: sDbg.dailyEmojis.L4 || [],
+          L5: sDbg.dailyEmojis.L5 || []
+        });
+        try {
+          const chains = {
+            L1: Array.isArray(sDbg.dailyEmojis.L1) ? sDbg.dailyEmojis.L1.join('') : '',
+            L2: Array.isArray(sDbg.dailyEmojis.L2) ? sDbg.dailyEmojis.L2.join('') : '',
+            L3: Array.isArray(sDbg.dailyEmojis.L3) ? sDbg.dailyEmojis.L3.join('') : '',
+            L4: Array.isArray(sDbg.dailyEmojis.L4) ? sDbg.dailyEmojis.L4.join('') : '',
+            L5: Array.isArray(sDbg.dailyEmojis.L5) ? sDbg.dailyEmojis.L5.join('') : ''
+          };
+          console.log('[Nodeword] Daily emoji chains', chains);
+        } catch {}
+      } else {
+        console.log('[Nodeword] No dailyEmojis found in storage');
+      }
+      if (appState.puzzle && Array.isArray(appState.puzzle.solveOrderEmojis)) {
+        console.log('[Nodeword] Saved puzzle solveOrderEmojis', appState.puzzle.solveOrderEmojis);
+      } else {
+        console.log('[Nodeword] No saved puzzle solveOrderEmojis');
+      }
+    } catch {}
+    logDailyDebug('on-load');
+  } catch {}
   function updateStatsUI() {
     if (statTotal) statTotal.textContent = String(appState.total || 0);
     const statStreak = document.getElementById('statStreak'); if (statStreak) statStreak.textContent = String(appState.streak || 0);
@@ -1416,7 +1754,7 @@ document.addEventListener("DOMContentLoaded", () => {
     container.textContent = 'Generating…';
     console.log('[Nodeword] Generating puzzle…');
     // Hide next button until solved and clear status message
-    if (nextBtn) nextBtn.style.visibility = 'hidden';
+    if (nextBtn) nextBtn.style.display = 'none';
     const statusEl = document.getElementById('status');
     if (statusEl) statusEl.textContent = '';
     // Ensure level indicator reflects current target-based level immediately
@@ -1431,15 +1769,38 @@ document.addEventListener("DOMContentLoaded", () => {
       const target = Math.min(Math.max(5, currentTargetWords), maxTargetWords);
       // If a solved puzzle is saved for this target, display it as-is (no generation)
       const saved = appState.puzzle;
-      if (saved && saved.solved === true && saved.target === target && saved.graph) {
+      console.log('[Nodeword] Checking saved puzzle for solved restore', {
+        exists: Boolean(saved),
+        solved: Boolean(saved && saved.solved),
+        savedTarget: saved && saved.target,
+        target,
+        hasGraph: Boolean(saved && saved.graph)
+      });
+      try { if (saved) console.log('[Nodeword] Saved snapshot (debug)', { 
+        keys: Object.keys(saved||{}), 
+        hasAssignment: !!saved.assignment,
+        hasNodePositions: !!saved.nodePositions,
+        graphWords: saved.graph && saved.graph.words && saved.graph.words.length,
+        graphCats: saved.graph && saved.graph.categories && saved.graph.categories.length,
+        graphEdges: saved.graph && saved.graph.edges && saved.graph.edges.length
+      }); } catch {}
+      const levelTodayCheck = Math.min(5, Math.max(1, ((target || 5) - 4)));
+      const solvedByStats = (appState.today || 0) >= levelTodayCheck;
+      if (saved && saved.target === target && saved.graph && (saved.solved === true || solvedByStats)) {
         const graph = saved.graph;
-        console.log('[Nodeword] Restoring solved puzzle from save');
+        console.log('[Nodeword] Restoring solved puzzle from save', { solvedByFlag: Boolean(saved && saved.solved), solvedByStats });
         const aliasGraph = toAliasGraph(graph);
         const catEmojis = await fetchCategoryEmojis();
+        // Derive level from saved target words to avoid relying on appState
+        const levelTodaySaved = Math.min(5, Math.max(1, ((saved.target || 5) - 4)));
+        // Ensure in-memory target reflects the current puzzle for Next button progression
+        try { currentTargetWords = saved.target; appState.target = saved.target; writeState(appState); } catch {}
         const persist = {
-          restore: { nodePositions: saved.nodePositions || null, assignment: saved.assignment || null, solved: true },
-          save(payload) { /* solved: do nothing */ }
+          restore: { nodePositions: saved.nodePositions || null, assignment: null, solved: true },
+          save(payload) { /* solved: do nothing */ },
+          meta: { levelToday: levelTodaySaved }
         };
+        console.log('[Nodeword] Restore meta.levelToday =', levelTodaySaved, 'from saved.target =', saved.target);
         renderForceGraph(container, aliasGraph, wordData, catEmojis, persist);
         console.log('[Nodeword] Graph rendered to SVG (solved restore)');
         return;
@@ -1519,13 +1880,14 @@ document.addEventListener("DOMContentLoaded", () => {
       let graph;
       if (savedValid) {
         graph = appState.puzzle.graph;
+        console.log('[Nodeword] Using savedValid graph for generation path');
       } else {
         // Deterministic seed by day + level (attempt count provides fallbacks)
         const today = todayStamp();
         // Derive level from target words to keep consistent with word count
-        const levelToday = Math.min(5, Math.max(1, (target - 4)));
-        console.log('[Nodeword] Generating graph with constraints…', { ...cfg, targetWords: target, seed: `${today}-L${levelToday}` });
-        graph = await withSeed(`${today}-L${levelToday}`, async () => generateGraphWithRetries(target));
+        const levelTodayGen = Math.min(5, Math.max(1, (target - 4)));
+        console.log('[Nodeword] Generating graph with constraints…', { ...cfg, targetWords: target, seed: `${today}-L${levelTodayGen}` });
+        graph = await withSeed(`${today}-L${levelTodayGen}`, async () => generateGraphWithRetries(target));
         if (appState.puzzle) { appState.puzzle = null; writeState(appState); }
         if (!graph) {
           // Give up gracefully: inform and try again with a fresh state
@@ -1539,6 +1901,8 @@ document.addEventListener("DOMContentLoaded", () => {
         categories: graph.categories.length,
         edges: graph.edges.length
       });
+      // Ensure in-memory target reflects the current puzzle for Next button progression
+      try { currentTargetWords = target; appState.target = target; writeState(appState); } catch {}
       const aliasGraph = toAliasGraph(graph);
       const catEmojis = await fetchCategoryEmojis();
       // Provide persistence adapter
@@ -1549,19 +1913,38 @@ document.addEventListener("DOMContentLoaded", () => {
           solved: appState.puzzle.solved || false,
         } : null,
         save(payload) {
+          // Only log when marking solved to avoid console spam from position snapshots
+          try { if (payload && payload.solved === true) console.log('[Nodeword] persist.save solved=true'); } catch {}
+          // Merge payload with existing puzzle snapshot; preserve fields unless explicitly overridden
+          const prev = appState.puzzle || {};
+          const nodePositions = (payload && payload.nodePositions) ?? prev.nodePositions ?? null;
+          const assignment = (payload && payload.assignment) ?? prev.assignment ?? null;
+          // Once solved becomes true, it stays true
+          const solvedFlag = (prev.solved === true) || (payload && payload.solved === true);
+          if (solvedFlag === true && !(prev.solved === true)) {
+            try { console.log('[Nodeword] Persist adapter: solved flag set true; merging payload to state'); } catch {}
+          }
           appState.puzzle = {
-            startedAt: appState.puzzle?.startedAt || Date.now(),
+            ...prev,
+            startedAt: prev.startedAt || Date.now(),
             target,
             graph,
+            nodePositions,
+            assignment,
             ...payload,
+            solved: solvedFlag,
           };
-          appState.target = target;
+          const nextTarget = Math.max(appState.target || 0, target || 0);
+          if (nextTarget !== appState.target) {
+            try { console.log('[Nodeword] Updating appState.target', { from: appState.target, to: nextTarget }); } catch {}
+            appState.target = nextTarget;
+          }
           writeState(appState);
         }
       };
       // Pass level meta to renderer for W1 highlight
-      const levelToday = Math.min(5, Math.max(1, (target - 4)));
-      persist.meta = { levelToday };
+      const levelTodayMeta = Math.min(5, Math.max(1, (target - 4)));
+      persist.meta = { levelToday: levelTodayMeta };
       renderForceGraph(container, aliasGraph, wordData, catEmojis, persist);
       console.log('[Nodeword] Graph rendered to SVG');
     } catch (err) {
@@ -1572,11 +1955,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
   nextBtn?.addEventListener('click', () => {
     console.log('[Nodeword] Next puzzle clicked');
+    logDailyDebug('before-next');
     // Enforce daily cap: allow only 5 solves per day
     if ((appState.today || 0) >= dailyLevelCap) {
       const statusEl = document.getElementById('status');
       if (statusEl) statusEl.textContent = 'Come back tomorrow for more Nodeword!';
-      nextBtn.style.visibility = 'hidden';
+      nextBtn.style.display = 'none';
       return;
     }
     // Stats increment on solve happens at solve time; advance difficulty and regenerate
@@ -1585,9 +1969,10 @@ document.addEventListener("DOMContentLoaded", () => {
     // Clear current puzzle restore state for next puzzle
     appState.puzzle = null;
     writeState(appState);
+    logDailyDebug('after-next');
     generateAndRender();
   });
-  if (nextBtn) nextBtn.style.visibility = 'hidden';
+  if (nextBtn) nextBtn.style.display = 'none';
   generateAndRender();
 });
 

@@ -91,6 +91,18 @@
   margin-top: 12px;
 }
 
+/* Harmonize non-primary button inside modal */
+#closeShare {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 12px;
+  padding: 10px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+}
+
 :root {
   --bg: #0f1220;
   --bg-accent: #151933;
@@ -225,6 +237,17 @@ a:hover {
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 12px;
   text-align: left;
+}
+
+@media (max-width: 480px) {
+  #puzzle {
+    width: 100%;
+    padding: 0; /* remove inner padding so SVG can use full width */
+    border-left: none;
+    border-right: none;
+    border-radius: 0;
+    margin: 12px 0 0;
+  }
 }
 
 .graph-svg {
