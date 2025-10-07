@@ -1088,6 +1088,14 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
         let s = {};
         try { s = raw ? JSON.parse(raw) : {}; console.log('[Nodeword] Share state loaded'); } catch (e) { console.warn('[Nodeword] Bad saved state JSON; ignoring'); s = {}; }
         if (!s.dailyEmojis) s.dailyEmojis = {};
+        // Reset dailyEmojis if the saved day is not today, to avoid reusing yesterday's chains
+        try {
+          const dNow = new Date();
+          const todayStampNow = `${dNow.getFullYear()}-${String(dNow.getMonth() + 1).padStart(2, '0')}-${String(dNow.getDate()).padStart(2, '0')}`;
+          if (s.lastDay && s.lastDay !== todayStampNow) {
+            s.dailyEmojis = {};
+          }
+        } catch { }
         const level = Math.min(5, Math.max(1, Number(persist && persist.meta && persist.meta.levelToday || 1)));
         const levelKey = 'L' + level;
         if (Array.isArray(solveOrderEmojis) && solveOrderEmojis.length && (!Array.isArray(s.dailyEmojis[levelKey]) || s.dailyEmojis[levelKey].length === 0)) {
@@ -1516,6 +1524,14 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
             const prevRaw = localStorage.getItem('nodeword_state_v1');
             const prev = prevRaw ? JSON.parse(prevRaw) : {};
             if (!prev.dailyEmojis) prev.dailyEmojis = {};
+            // Ensure dailyEmojis are isolated per day
+            try {
+              const dNow = new Date();
+              const todayStampNow = `${dNow.getFullYear()}-${String(dNow.getMonth() + 1).padStart(2, '0')}-${String(dNow.getDate()).padStart(2, '0')}`;
+              if (prev.lastDay && prev.lastDay !== todayStampNow) {
+                prev.dailyEmojis = {};
+              }
+            } catch { }
             prev.dailyEmojis['L' + levelTodayNow] = (emsNow || []).slice();
             // Deep-clone snapshot to avoid pointer aliasing
             localStorage.setItem('nodeword_state_v1', JSON.stringify(JSON.parse(JSON.stringify(prev))));
@@ -1609,7 +1625,7 @@ document.addEventListener("DOMContentLoaded", () => {
       try {
         const prevRaw = localStorage.getItem(STORAGE_KEY);
         const prev = prevRaw ? JSON.parse(prevRaw) : null;
-        if (prev && prev.dailyEmojis) {
+        if (prev && prev.dailyEmojis && prev.lastDay === s.lastDay) {
           if (!s.dailyEmojis) s.dailyEmojis = {};
           const keys = ['L1', 'L2', 'L3', 'L4', 'L5'];
           for (const k of keys) {
