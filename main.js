@@ -1092,8 +1092,10 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
         try {
           const dNow = new Date();
           const todayStampNow = `${dNow.getFullYear()}-${String(dNow.getMonth() + 1).padStart(2, '0')}-${String(dNow.getDate()).padStart(2, '0')}`;
-          if (s.lastDay && s.lastDay !== todayStampNow) {
+          if (s.lastDay !== todayStampNow) {
             s.dailyEmojis = {};
+            s.lastDay = todayStampNow;
+            try { writeState(s); } catch { }
           }
         } catch { }
         const level = Math.min(5, Math.max(1, Number(persist && persist.meta && persist.meta.levelToday || 1)));
@@ -1524,12 +1526,13 @@ function renderForceGraph(container, aliasGraph, wordToCategories, categoryEmoji
             const prevRaw = localStorage.getItem('nodeword_state_v1');
             const prev = prevRaw ? JSON.parse(prevRaw) : {};
             if (!prev.dailyEmojis) prev.dailyEmojis = {};
-            // Ensure dailyEmojis are isolated per day
+            // Ensure dailyEmojis are isolated per day; also stamp lastDay
             try {
               const dNow = new Date();
               const todayStampNow = `${dNow.getFullYear()}-${String(dNow.getMonth() + 1).padStart(2, '0')}-${String(dNow.getDate()).padStart(2, '0')}`;
-              if (prev.lastDay && prev.lastDay !== todayStampNow) {
+              if (prev.lastDay !== todayStampNow) {
                 prev.dailyEmojis = {};
+                prev.lastDay = todayStampNow;
               }
             } catch { }
             prev.dailyEmojis['L' + levelTodayNow] = (emsNow || []).slice();
@@ -1635,6 +1638,10 @@ document.addEventListener("DOMContentLoaded", () => {
               if (Array.isArray(old) && old.length > 0) s.dailyEmojis[k] = old.slice();
             }
           }
+        } else if (prev && prev.lastDay !== s.lastDay) {
+          // New day: do not merge previous dailyEmojis
+          // Ensure we clear any carryover
+          s.dailyEmojis = s.dailyEmojis || {};
         }
       } catch { }
       s.version = STORAGE_VERSION;
